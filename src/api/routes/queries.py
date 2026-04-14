@@ -16,7 +16,7 @@ Usage:
 from __future__ import annotations
 
 import structlog
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Header, HTTPException, Request
 
 from models.query import QuerySubmission
 from utils.decorators import log_api_call
@@ -29,32 +29,43 @@ router = APIRouter(tags=["queries"])
 
 @router.post("/queries", status_code=201)
 @log_api_call
-async def submit_query(request: Request, submission: QuerySubmission) -> dict:
+async def submit_query(
+    request: Request,
+    submission: QuerySubmission,
+    x_vendor_id: str = Header(
+        ...,
+        description="Vendor ID (from JWT in production). Example: 001al00002Ie1zsAAB",
+        alias="X-Vendor-ID",
+    ),
+    x_correlation_id: str | None = Header(
+        None,
+        description="Optional correlation ID for tracing. Auto-generated if not provided.",
+        alias="X-Correlation-ID",
+    ),
+) -> dict:
     """Submit a vendor query from the portal.
 
-    The vendor_id is extracted from the X-Vendor-ID header.
-    In production, this will come from the Cognito JWT claims.
-    The correlation_id is extracted from X-Correlation-ID header
-    or generated automatically.
+    **How to test in Swagger UI:**
+
+    1. Fill in `X-Vendor-ID` header (e.g., `001al00002Ie1zsAAB`)
+    2. Fill in the request body with query details
+    3. Click Execute
 
     Returns:
-        201 with {"query_id": "VQ-2026-XXXX", "status": "RECEIVED"}
-        409 on duplicate submission
-        422 on validation error (Pydantic handles this)
+    - **201**: `{"query_id": "VQ-2026-XXXX", "status": "RECEIVED"}`
+    - **409**: Duplicate submission (same vendor + subject + description)
+    - **422**: Validation error (subject too short, description too short, etc.)
     """
-    # Extract vendor_id from header (placeholder for JWT extraction)
-    # SECURITY: vendor_id comes from auth header, NEVER from request body
-    vendor_id = request.headers.get("X-Vendor-ID")
-    if not vendor_id:
-        raise HTTPException(status_code=400, detail="X-Vendor-ID header required")
-
-    correlation_id = request.headers.get("X-Correlation-ID")
-
     portal_intake = request.app.state.portal_intake
+    if portal_intake is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Portal Intake Service unavailable — check PostgreSQL/SQS connection",
+        )
 
     try:
         payload = await portal_intake.submit_query(
-            submission, vendor_id, correlation_id=correlation_id
+            submission, x_vendor_id, correlation_id=x_correlation_id
         )
     except DuplicateQueryError as exc:
         raise HTTPException(
@@ -67,28 +78,37 @@ async def submit_query(request: Request, submission: QuerySubmission) -> dict:
 
 @router.get("/queries/{query_id}")
 @log_api_call
-async def get_query_status(request: Request, query_id: str) -> dict:
+async def get_query_status(
+    request: Request,
+    query_id: str,
+    x_vendor_id: str = Header(
+        ...,
+        description="Vendor ID to verify ownership. Example: 001al00002Ie1zsAAB",
+        alias="X-Vendor-ID",
+    ),
+) -> dict:
     """Get the status of a submitted query.
 
-    The vendor_id is extracted from the X-Vendor-ID header
-    to ensure vendors can only see their own queries.
+    The vendor can only see their own queries — vendor_id from the
+    header must match the query's vendor_id in the database.
 
-    Returns:
-        200 with query status details
-        404 if query not found or vendor mismatch
+    **How to test in Swagger UI:**
+
+    1. Fill in the `query_id` path parameter (e.g., `VQ-2026-0042`)
+    2. Fill in `X-Vendor-ID` header with the same vendor used to submit
+    3. Click Execute
     """
-    vendor_id = request.headers.get("X-Vendor-ID")
-    if not vendor_id:
-        raise HTTPException(status_code=400, detail="X-Vendor-ID header required")
-
     postgres = request.app.state.postgres
+    if postgres is None:
+        raise HTTPException(status_code=503, detail="Database unavailable")
 
     row = await postgres.fetchrow(
-        "SELECT query_id, status, source, created_at, updated_at "
+        "SELECT query_id, status, source, processing_path, "
+        "       created_at, updated_at "
         "FROM workflow.case_execution "
         "WHERE query_id = $1 AND vendor_id = $2",
         query_id,
-        vendor_id,
+        x_vendor_id,
     )
 
     if row is None:
@@ -98,6 +118,7 @@ async def get_query_status(request: Request, query_id: str) -> dict:
         "query_id": row["query_id"],
         "status": row["status"],
         "source": row["source"],
+        "processing_path": row.get("processing_path"),
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
     }

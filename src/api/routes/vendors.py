@@ -23,13 +23,12 @@ router = APIRouter(prefix="/vendors", tags=["vendors"])
 @router.get("")
 @log_api_call
 async def get_all_vendors(request: Request) -> list[VendorAccountData]:
-    """Get all active vendors from Salesforce."""
-    if not getattr(request.state, "is_authenticated", False):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Not authenticated"},
-        )
+    """Get all active vendors from Salesforce.
 
+    Authentication is handled by AuthMiddleware — no need to
+    check request.state.is_authenticated here. In dev mode,
+    /vendors is in the middleware skip list for Swagger testing.
+    """
     correlation_id = IdGenerator.generate_correlation_id()
 
     try:
@@ -58,13 +57,12 @@ async def update_vendor(
     update_request: VendorUpdateRequest,
     request: Request,
 ) -> VendorUpdateResult:
-    """Update a vendor's fields in Salesforce."""
-    if not getattr(request.state, "is_authenticated", False):
-        return JSONResponse(
-            status_code=401,
-            content={"detail": "Not authenticated"},
-        )
+    """Update a vendor's fields in Salesforce.
 
+    Authentication is handled by AuthMiddleware — no need to
+    check request.state.is_authenticated here. In dev mode,
+    /vendors is in the middleware skip list for Swagger testing.
+    """
     correlation_id = IdGenerator.generate_correlation_id()
 
     sf_fields = update_request.to_salesforce_fields()
