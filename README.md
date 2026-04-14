@@ -2,141 +2,304 @@
 
 An agentic AI platform that automates vendor query resolution for enterprise support teams. Vendors submit queries via email or a web portal. The system uses LLM-powered analysis, knowledge base search, and automated response generation to resolve queries or route them to human teams.
 
+**Owner:** Hexaware Technologies
+**Stack:** Python 3.12 + FastAPI + LangGraph + Amazon Bedrock + PostgreSQL + AWS
+
+---
+
 ## Current State
 
-**Phase 3: AI Pipeline Core (Steps 7-9)** — complete.
+**Phase 3: AI Pipeline Core** — complete.
 
-What works right now:
-- Project skeleton with 5-layer architecture
-- Configuration loading from `.env` via pydantic-settings
-- Structured logging via direct structlog (IST timestamps, correlation IDs, `tool=` field on connectors)
-- All Pydantic data models for the full pipeline (22 models, 44 tests)
-- PostgreSQL schema (6 schemas, 14 tables, pgvector) with SSH tunnel connector
-- Idempotency check via `INSERT ON CONFLICT`
-- **Email intake:** Graph API webhook + reconciliation polling, MIME parsing, attachment extraction (PDF/Excel/Word/CSV) with manifest, Salesforce vendor identification (3-step fallback), thread correlation, S3 storage (single bucket, prefix-organized), SQS enqueue
-- **Portal intake:** POST /queries with Pydantic validation, idempotency (SHA-256 hash), EventBridge events, SQS enqueue
-- **FastAPI routes:** POST /queries (201), GET /queries/{id}, POST /webhooks/ms-graph
-- **AWS connectors:** S3, SQS, EventBridge (all using asyncio.to_thread)
-- **External API connectors:** Microsoft Graph API (MSAL + httpx + tenacity retry), Salesforce CRM (simple-salesforce)
-- **Amazon Bedrock connector:** LLM inference (Claude Sonnet 3.5) + embeddings (Titan Embed v2). Retry with tenacity, cost tracking per call.
-- **OpenAI connector:** Chat Completions (GPT-4o) + Embeddings (text-embedding-3-small). Retry with tenacity, cost tracking per call.
-- **LLM Gateway:** Unified interface routing to Bedrock (primary) or OpenAI (fallback). Four modes: bedrock_only, openai_only, bedrock_with_openai_fallback, openai_with_bedrock_fallback.
-- **LangGraph AI pipeline:** Context loading → Query analysis (8-layer defense) → Confidence check → Routing → KB search → Path decision. Three processing paths (A/B/C) wired with conditional edges.
-- **Prompt templates:** Jinja2 with StrictUndefined for query analysis, resolution, acknowledgment, resolution-from-notes
-- **SQS consumer:** Pulls from both intake queues, feeds graph, deletes on success
-- **JWT authentication:** Login/logout endpoints, auth middleware (Bearer token validation on all protected routes), token blacklist via PostgreSQL `cache.kv_store`, auto-refresh for near-expiry tokens
-- **Vendor CRUD:** List all active vendors from Salesforce, update vendor fields (website, tier, category, payment terms, SLA settings)
-- 273 tests passing, ruff clean
+### What Works Right Now
+
+**Authentication:**
+- Login with username/password (POST /auth/login) — returns JWT token
+- Logout with token blacklisting (POST /auth/logout)
+- JWT middleware protects all endpoints (Bearer token required)
+- Auto-refresh: near-expiry tokens get silently renewed via X-New-Token header
+- Swagger UI has an Authorize button — paste your JWT to test all protected endpoints
+
+**Portal Intake (vendor submits a query via web form):**
+- POST /queries — validates input, generates VQ-2026-XXXX query ID, stores in PostgreSQL, publishes to EventBridge, enqueues to SQS
+- GET /queries/{query_id} — check query status (vendor can only see their own queries)
+- SHA-256 idempotency — same vendor + subject + description = 409 Duplicate
+
+**Email Intake (vendor sends email to vendor-support@company.com):**
+- Microsoft Graph API webhook + reconciliation polling (every 5 min)
+- MIME parsing, attachment extraction (PDF/Excel/Word/CSV)
+- Salesforce vendor identification (3-step fallback: exact email, body extraction, fuzzy name)
+- Thread correlation (In-Reply-To, References, conversationId)
+- Raw email storage in S3, metadata in PostgreSQL
+- GET /emails — paginated email chains with filtering and search
+- GET /emails/stats — dashboard statistics
+- GET /emails/{query_id} — single email chain detail with attachments
+
+**AI Pipeline (LangGraph state machine):**
+- Context loading (vendor profile from Salesforce + episodic memory)
+- Query analysis (LLM Call #1 via Bedrock Claude — 8-layer defense strategy)
+- Confidence check (>= 0.85 continues, < 0.85 routes to Path C)
+- Routing (deterministic rules: team assignment, SLA target)
+- KB search (Titan Embed v2 embeddings, pgvector cosine similarity)
+- Path decision (KB match >= 80% = Path A, otherwise Path B)
+- SQS consumer pulls from both intake queues and feeds the graph
+
+**Vendor Management:**
+- GET /vendors — list all active vendors from Salesforce (25 vendors)
+- PUT /vendors/{vendor_id} — update vendor fields
+
+**Infrastructure:**
+- PostgreSQL on RDS via SSH tunnel (6 schemas, 14+ tables, pgvector)
+- AWS S3 (single bucket, prefix-organized)
+- AWS SQS (intake queues + DLQ)
+- AWS EventBridge (event publishing)
+- Amazon Bedrock (Claude Sonnet 3.5 + Titan Embed v2)
+- OpenAI fallback (GPT-4o + text-embedding-3-small)
+- Structured logging (structlog, IST timestamps, correlation IDs)
+
+---
 
 ## Tech Stack
 
-- **Backend:** Python 3.12, FastAPI, LangGraph
-- **AI:** Amazon Bedrock (Claude Sonnet 3.5, Titan Embed v2), OpenAI (dev fallback)
-- **Database:** PostgreSQL on RDS (pgvector for embeddings), accessed via SSH tunnel
-- **Cloud:** AWS (S3, SQS, EventBridge, Cognito)
-- **Integrations:** Microsoft Graph API (email), Salesforce CRM, ServiceNow ITSM
-- **Frontend:** Angular 17+ (Phase 7)
-- **Package Manager:** uv
+| Layer | Technology |
+|-------|------------|
+| Backend | Python 3.12, FastAPI, LangGraph |
+| AI/LLM | Amazon Bedrock (Claude Sonnet 3.5, Titan Embed v2), OpenAI (dev fallback) |
+| Database | PostgreSQL on RDS (pgvector for embeddings), SSH tunnel via bastion |
+| Cloud | AWS (S3, SQS, EventBridge, Cognito) |
+| Integrations | Microsoft Graph API (email), Salesforce CRM (vendors), ServiceNow ITSM (tickets) |
+| Auth | JWT (HMAC-SHA256) via python-jose, werkzeug password hashing |
+| Frontend | Angular 17+ (Phase 7 — not yet started) |
+| Package Manager | uv (never use pip directly) |
+
+---
 
 ## Setup
 
 ### Prerequisites
+
 - Python 3.12+
 - [uv](https://docs.astral.sh/uv/) installed
 - SSH key for bastion host access to RDS
-- `.env` file with credentials (copy from `.env.copy`)
+- AWS credentials with Bedrock, S3, SQS, EventBridge access
+- Salesforce API credentials
+- Microsoft Graph API credentials (for email features)
 
 ### Install
+
 ```bash
 git clone <repo-url>
-cd vqm
+cd vqm_ps
 cp .env.copy .env       # Fill in real credentials
 uv sync                  # Install all dependencies
 ```
 
-### Run
-```bash
-uv run uvicorn main:app --reload --port 8000
+### Configure .env
+
+Key environment variables (see `.env.copy` for the full template):
+
+```env
+# Database (via SSH tunnel)
+POSTGRES_HOST=localhost
+POSTGRES_DB=vqms
+SSH_HOST=<bastion-ip>
+SSH_PRIVATE_KEY_PATH=<path-to-key.pem>
+RDS_HOST=<rds-endpoint>
+
+# Auth
+JWT_SECRET_KEY=<your-secret-key>
+
+# AWS
+AWS_REGION=us-east-1
+S3_BUCKET_DATA_STORE=vqms-data-store
+
+# Salesforce
+SALESFORCE_INSTANCE_URL=https://yourcompany.my.salesforce.com
+SALESFORCE_USERNAME=<sf-user>
+
+# Microsoft Graph API
+GRAPH_API_TENANT_ID=<azure-tenant-id>
+GRAPH_API_CLIENT_ID=<azure-client-id>
+GRAPH_API_MAILBOX=vendorsupport@yourcompany.com
 ```
 
-### Test
+### Run the Server
+
 ```bash
-uv run pytest
-uv run ruff check .
+uv run uvicorn main:app --reload --port 8001
 ```
+
+Then open: http://localhost:8001/docs (Swagger UI)
+
+### Run Tests
+
+```bash
+uv run pytest                    # Run all tests
+uv run pytest --cov=src          # With coverage
+uv run ruff check .              # Linting
+```
+
+---
+
+## How to Use Swagger UI
+
+### Step 1: Login
+
+1. Open http://localhost:8001/docs
+2. Expand **POST /auth/login**
+3. Click "Try it out", enter:
+   ```json
+   {
+     "username_or_email": "admin_user",
+     "password": "admin123"
+   }
+   ```
+4. Click Execute — copy the `token` from the response
+
+### Step 2: Authorize
+
+1. Click the **Authorize** button (top-right, lock icon)
+2. Paste the token (no "Bearer " prefix needed — Swagger adds it)
+3. Click Authorize, then Close
+
+### Step 3: Test Any Endpoint
+
+All endpoints now send your JWT automatically. Try:
+- **GET /vendors** — returns 25 vendors from Salesforce
+- **GET /emails** — returns ingested email chains
+- **POST /queries** — submit a new vendor query
+
+See `docs/api_testing_guide.md` for ready-to-use test examples.
+
+---
+
+## API Endpoints
+
+### Authentication
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/auth/login` | POST | None | Login — returns JWT token |
+| `/auth/logout` | POST | Bearer | Blacklist current token |
+
+### Portal Queries
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/queries` | POST | Bearer + X-Vendor-ID | Submit a vendor query |
+| `/queries/{query_id}` | GET | Bearer + X-Vendor-ID | Check query status |
+
+### Email Dashboard
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/emails` | GET | Bearer | Paginated email chains (filter, search, sort) |
+| `/emails/stats` | GET | Bearer | Dashboard statistics |
+| `/emails/{query_id}` | GET | Bearer | Single email chain detail |
+| `/emails/{query_id}/attachments/{id}/download` | GET | Bearer | Presigned S3 download URL |
+
+### Vendor Management
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/vendors` | GET | Bearer | List all active vendors from Salesforce |
+| `/vendors/{vendor_id}` | PUT | Bearer | Update vendor fields |
+
+### System
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/health` | GET | None | Health check |
+| `/webhooks/ms-graph` | POST | HMAC | Graph API email notifications |
+
+---
 
 ## Project Structure
 
 ```
-vqm/
-├── src/                 # All backend Python code
-│   ├── main.py          # FastAPI entry point (lifespan, routes, health check)
-│   ├── models/          # Layer 1: Pydantic data models (22 models)
-│   ├── intake/          # Layer 2: Email + portal entry points + routes + polling
-│   ├── dashboard/       # Email dashboard API (read-only endpoints + service)
-│   ├── pipeline/        # Layer 3: LangGraph AI pipeline + nodes + prompts
-│   ├── connectors/      # Layer 4: S3, SQS, EventBridge, Graph API, Salesforce, PostgreSQL, Bedrock, OpenAI, LLM Gateway
-│   ├── services/        # Business logic (auth service: login, JWT, blacklist)
-│   ├── api/             # API layer (auth middleware, auth routes, vendor routes)
-│   ├── cache/           # Cache helpers (pg_cache: token blacklist via cache.kv_store)
-│   ├── config/          # Configuration (pydantic-settings)
-│   ├── utils/           # Helpers, logging, exceptions, decorators
-│   └── db/migrations/   # SQL schema migrations (10 files)
-├── tests/               # 273 tests (models, connectors, intake, routes, pipeline, auth, vendors)
-├── docs/                # Documentation and reference materials
-├── data/                # Knowledge base articles, local storage
-└── tasks/               # Task tracking and lessons learned
+vqm_ps/
+├── main.py                      # FastAPI entry point (lifespan, routes, middleware)
+├── CLAUDE.md                    # AI assistant instructions (full architecture)
+├── Flow.md                      # Runtime data flow walkthrough
+├── README.md                    # This file
+│
+├── src/
+│   ├── models/                  # Layer 1: Pydantic data models
+│   ├── services/                # Business logic (auth, portal intake, email dashboard)
+│   ├── api/                     # API layer (middleware, routes)
+│   │   ├── middleware/          #   JWT auth middleware
+│   │   └── routes/              #   auth, queries, vendors, dashboard, webhooks
+│   ├── orchestration/           # Layer 3: LangGraph pipeline + nodes + prompts
+│   ├── adapters/                # Layer 4: Salesforce, Bedrock, Graph API, LLM Gateway
+│   ├── storage/                 #   S3 connector
+│   ├── queues/                  #   SQS connector
+│   ├── events/                  #   EventBridge connector
+│   ├── db/                      #   PostgreSQL connector + SQL migrations
+│   ├── cache/                   #   PostgreSQL-backed cache (token blacklist)
+│   ├── config/                  #   Settings (pydantic-settings from .env)
+│   └── utils/                   #   Helpers, logging, exceptions, decorators
+│
+├── tests/                       # All tests (models, services, routes, pipeline)
+├── docs/                        # Documentation
+│   ├── system_flow_guide.md     #   System flow with ASCII diagrams
+│   ├── detailed_technical_guide.md  # Deep-dive technical guide
+│   └── api_testing_guide.md     #   API testing examples for Swagger UI
+├── data/                        # Knowledge base articles
+└── tasks/                       # Task tracking and lessons learned
 ```
 
-See `CLAUDE.md` for the full architecture, coding standards, and build plan.
-See `Flow.md` for the runtime data flow walkthrough.
+---
 
-## API Endpoints
+## Three Processing Paths
 
-### Intake
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/health` | GET | Health check — returns 200 |
-| `/queries` | POST | Portal query submission (requires X-Vendor-ID header) |
-| `/queries/{id}` | GET | Query status lookup (requires X-Vendor-ID header) |
-| `/webhooks/ms-graph` | POST | MS Graph email notification webhook |
+Every vendor query follows one of three paths:
 
-### Email Dashboard (read-only)
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/emails` | GET | Paginated list of email chains (filter by status, priority, search) |
-| `/emails/stats` | GET | Dashboard summary statistics (counts by status, priority, time) |
-| `/emails/{query_id}` | GET | Single email chain detail with full thread |
-| `/emails/{query_id}/attachments/{attachment_id}/download` | GET | Presigned S3 download URL for attachment |
-
-### Authentication
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/auth/login` | POST | Authenticate user — returns JWT token |
-| `/auth/logout` | POST | Blacklist JWT token (requires Bearer token) |
-
-### Vendor Management
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/vendors` | GET | List all active vendors from Salesforce (requires Bearer token) |
-| `/vendors/{vendor_id}` | PUT | Update vendor fields in Salesforce (requires Bearer token) |
-
-### Environment Variables (Auth)
-Add these to your `.env` file (see `.env.copy` for template):
 ```
-JWT_SECRET_KEY=<your-jwt-secret-key>
-JWT_ALGORITHM=HS256
-SESSION_TIMEOUT_SECONDS=1800
-TOKEN_REFRESH_THRESHOLD_SECONDS=300
+                    Query arrives (email or portal)
+                              |
+                    AI analyzes intent + entities
+                              |
+                    Confidence score >= 0.85?
+                       /              \
+                     YES               NO
+                      |                 |
+              KB has answer?        PATH C
+                 /       \         (human reviews
+               YES        NO       AI analysis,
+                |          |        corrects, then
+             PATH A     PATH B      resumes A or B)
+          (AI resolves  (AI sends
+           full answer)  ack only,
+                        human team
+                        investigates)
 ```
+
+| Path | What Happens | LLM Calls | Human Needed? |
+|------|-------------|-----------|---------------|
+| **A** | AI drafts full resolution from KB articles | 2 | No |
+| **B** | AI sends acknowledgment, human team investigates | 2-3 | Yes (investigation) |
+| **C** | Low confidence — human reviewer validates AI analysis first | 2-3 | Yes (review + maybe investigation) |
+
+---
 
 ## Build Phases
 
-1. **Foundation and Data Layer** — complete
-2. **Intake Services (Email + Portal)** — complete
-3. **AI Pipeline Core (LangGraph, Query Analysis, Routing, KB Search)** — complete
-4. Response Generation and Delivery
-5. Human Review and Path C
-6. SLA Monitoring and Closure
-7. Frontend Portal (Angular)
-8. Integration Testing and Hardening
+| Phase | Status | Description |
+|-------|--------|-------------|
+| 1 | Done | Foundation: models, DB schema, connectors, config |
+| 2 | Done | Intake: email ingestion + portal submission |
+| 3 | Done | AI Pipeline: LangGraph, query analysis, routing, KB search |
+| 4 | Planned | Response generation: resolution, acknowledgment, quality gate, delivery |
+| 5 | Planned | Human review: Path C triage workflow |
+| 6 | Planned | SLA monitoring and closure logic |
+| 7 | Planned | Frontend: Angular vendor portal + triage portal |
+| 8 | Planned | Integration testing, hardening, production readiness |
+
+---
+
+## Key Documentation
+
+| File | What It Covers |
+|------|----------------|
+| `CLAUDE.md` | Full architecture, coding standards, build plan, all constraints |
+| `Flow.md` | Runtime walkthrough — follow the data through every function |
+| `docs/system_flow_guide.md` | System flow with ASCII diagrams (overview) |
+| `docs/detailed_technical_guide.md` | Deep-dive: every service, function, table, and SQL query |
+| `docs/api_testing_guide.md` | Ready-to-use API test examples for Swagger UI |
+| `tasks/todo.md` | Current task tracking |
+| `tasks/lessons.md` | Lessons learned from past mistakes |
