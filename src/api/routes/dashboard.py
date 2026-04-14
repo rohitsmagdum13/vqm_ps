@@ -48,7 +48,13 @@ def _get_correlation_id(request: Request) -> str:
 
 def _get_service(request: Request) -> EmailDashboardService:
     """Get the dashboard service from app state."""
-    return request.app.state.dashboard_service
+    service = getattr(request.app.state, "dashboard_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Email dashboard service is not available",
+        )
+    return service
 
 
 @router.get("")

@@ -160,6 +160,22 @@ async def lifespan(application: FastAPI):
         logger.warning("Portal Intake Service init failed")
         application.state.portal_intake = None
 
+    # --- Create Email Dashboard Service ---
+    # Read-only service for GET /emails endpoints.
+    # Needs postgres (queries) and s3 (attachment download URLs).
+    try:
+        from services.email_dashboard import EmailDashboardService
+
+        application.state.dashboard_service = EmailDashboardService(
+            postgres=application.state.postgres,
+            s3=application.state.s3,
+            settings=settings,
+        )
+        logger.info("Email Dashboard Service ready")
+    except Exception:
+        logger.warning("Email Dashboard Service init failed")
+        application.state.dashboard_service = None
+
     # --- Store settings for route handlers ---
     application.state.settings = settings
 
