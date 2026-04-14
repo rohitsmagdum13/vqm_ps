@@ -1,0 +1,69 @@
+"""Module: models/triage.py
+
+Pydantic models for Path C human review (low-confidence triage).
+
+When the Query Analysis Agent confidence is below 0.85,
+a TriagePackage is created and sent to the human review queue.
+A reviewer corrects the AI's classification and the workflow
+resumes with validated data.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from pydantic import BaseModel, ConfigDict, Field
+
+from models.workflow import AnalysisResult
+from models.communication import DraftResponse
+from models.query import UnifiedQueryPayload
+from models.ticket import RoutingDecision
+
+
+class TriagePackage(BaseModel):
+    """Package sent to human reviewer when AI confidence is low (Path C).
+
+    Contains everything the reviewer needs to make a decision:
+    the original query, the AI's analysis, confidence breakdown,
+    and the AI's suggested routing and draft.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    query_id: str = Field(description="VQMS query ID")
+    correlation_id: str = Field(description="UUID v4 tracing ID")
+    original_query: UnifiedQueryPayload = Field(description="The original vendor query")
+    analysis_result: AnalysisResult = Field(description="AI's analysis output")
+    confidence_breakdown: dict = Field(
+        default_factory=dict,
+        description="Detailed confidence scores by dimension (intent, entity, sentiment)",
+    )
+    suggested_routing: RoutingDecision = Field(description="AI's suggested routing decision")
+    suggested_draft: DraftResponse | None = Field(
+        default=None,
+        description="AI's suggested draft (if available)",
+    )
+    created_at: datetime = Field(description="When the triage package was created (IST)")
+
+
+class ReviewerDecision(BaseModel):
+    """Human reviewer's corrections to the AI's analysis (Path C).
+
+    After the reviewer submits corrections, the workflow resumes
+    with this validated data. The corrected fields override
+    the AI's original analysis.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    query_id: str = Field(description="VQMS query ID being reviewed")
+    reviewer_id: str = Field(description="Cognito user ID of the reviewer")
+    corrected_intent: str | None = Field(default=None, description="Corrected intent classification")
+    corrected_vendor_id: str | None = Field(default=None, description="Corrected vendor ID")
+    corrected_routing: str | None = Field(default=None, description="Corrected routing team")
+    confidence_override: float | None = Field(
+        default=None,
+        description="Reviewer's confidence override (always high since human-validated)",
+    )
+    reviewer_notes: str = Field(description="Reviewer's notes explaining the corrections")
+    decided_at: datetime = Field(description="When the review was completed (IST)")

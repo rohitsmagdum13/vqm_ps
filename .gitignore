@@ -1,0 +1,142 @@
+# ============================================================
+# VQMS .gitignore
+# ============================================================
+
+# ===========================
+# Secrets and credentials
+# ===========================
+.env
+.env.*
+!.env.copy
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+*secret*
+!*secret*.py
+
+# ===========================
+# Claude Code / AI assistant
+# ===========================
+.claude/
+.claude*
+!CLAUDE.md
+
+# ===========================
+# Python bytecode and packaging
+# ===========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+*.whl
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+sdist/
+develop-eggs/
+.installed.cfg
+
+# ===========================
+# Virtual environments
+# ===========================
+.venv/
+venv/
+ENV/
+env/
+
+# ===========================
+# uv package manager
+# ===========================
+uv.lock
+
+# ===========================
+# Testing and coverage
+# ===========================
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.nox/
+.tox/
+nosetests.xml
+junit*.xml
+
+# ===========================
+# Type checking and linting
+# ===========================
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.ruff_cache/
+.pytype/
+.pyre/
+
+# ===========================
+# IDE and editors
+# ===========================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+*.orig
+.project
+.settings/
+.classpath
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+
+# ===========================
+# OS generated files
+# ===========================
+.DS_Store
+.DS_Store?
+._*
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ===========================
+# Data directories (local artifacts)
+# ===========================
+data/logs/
+data/storage/
+*.log
+
+# ===========================
+# Jupyter notebooks checkpoints
+# ===========================
+.ipynb_checkpoints/
+*.ipynb_meta
+
+# ===========================
+# Angular frontend (if present)
+# ===========================
+frontend/node_modules/
+frontend/dist/
+frontend/.angular/
+frontend/.cache/
+
+# ===========================
+# Misc
+# ===========================
+*.db
+*.sqlite3
+*.bak
+*.dump

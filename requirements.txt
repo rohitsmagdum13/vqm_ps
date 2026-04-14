@@ -1,0 +1,87 @@
+# ============================================================
+# VQMS — Vendor Query Management System
+# Python dependencies (mirrors pyproject.toml)
+#
+# For users who cannot use uv:
+#   pip install -r requirements.txt
+#
+# Source of truth is pyproject.toml — keep both in sync.
+# ============================================================
+
+# -----------------------------------------------------------
+# Core Framework
+# -----------------------------------------------------------
+fastapi
+uvicorn[standard]
+pydantic>=2.0
+pydantic-settings
+
+# -----------------------------------------------------------
+# AI / LLM — Amazon Bedrock + LangChain/LangGraph
+# -----------------------------------------------------------
+boto3
+botocore
+langchain>=0.3
+langchain-aws                          # Bedrock integration for LangChain
+langchain-community                    # Community integrations (tools, retrievers)
+langgraph>=0.2                         # Multi-agent state machine orchestration
+langsmith                              # LLM observability and tracing
+openai                                 # Dev flexibility — .env supports OpenAI as LLM provider
+
+# -----------------------------------------------------------
+# Database — PostgreSQL + pgvector
+# -----------------------------------------------------------
+asyncpg                                # Async PostgreSQL driver
+psycopg2-binary                        # Sync PostgreSQL driver (used for migrations)
+pgvector                               # pgvector support for vector search
+sqlalchemy[asyncio]                    # ORM with async support
+alembic                                # Database migration framework
+sshtunnel                              # SSH tunnel to bastion host for RDS access
+
+# -----------------------------------------------------------
+# API & Web — External Service Connectors
+# -----------------------------------------------------------
+httpx                                  # Async HTTP client (Graph API)
+aiohttp                                # Async HTTP (LangChain dependency)
+requests                               # Sync HTTP (Salesforce, ServiceNow)
+msal                                   # Microsoft Graph API OAuth2 auth
+simple-salesforce                      # Salesforce CRM connector
+pysnow                                 # ServiceNow ITSM connector
+
+# -----------------------------------------------------------
+# Email & Attachment Processing
+# -----------------------------------------------------------
+python-multipart                       # FastAPI file upload support
+email-validator                        # Email address validation
+pdfplumber                             # PDF text extraction
+openpyxl                               # Excel file reading
+python-docx                            # Word document reading
+
+# -----------------------------------------------------------
+# Observability & Logging
+# -----------------------------------------------------------
+structlog                              # Structured logging
+opentelemetry-api                      # OpenTelemetry API
+opentelemetry-sdk                      # OpenTelemetry SDK
+opentelemetry-instrumentation-fastapi  # FastAPI auto-instrumentation
+opentelemetry-exporter-otlp            # OTLP exporter for traces
+
+# -----------------------------------------------------------
+# Templating & Prompts
+# -----------------------------------------------------------
+jinja2                                 # Prompt template rendering
+
+# -----------------------------------------------------------
+# Security & Compliance
+# -----------------------------------------------------------
+cryptography                           # Cryptographic primitives
+python-jose[cryptography]              # JWT token handling
+
+# -----------------------------------------------------------
+# Utilities
+# -----------------------------------------------------------
+python-dotenv                          # Load .env files
+pyyaml                                 # YAML parsing
+tenacity                               # Retry with exponential backoff
+python-dateutil                        # Date parsing and manipulation
+orjson                                 # Fast JSON serialization (SQS messages)
