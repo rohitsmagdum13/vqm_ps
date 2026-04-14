@@ -3,9 +3,9 @@
 Salesforce CRM connector for VQMS.
 
 Handles vendor identification using a 3-step fallback chain:
-1. Exact email match on Contact records
+1. Exact email match on Vendor_Contact__c records
 2. Extract email/name from email body, try again
-3. Fuzzy name match on Account records
+3. Fuzzy name match on Vendor_Account__c records
 
 Uses simple-salesforce for the Salesforce REST API. All calls
 are wrapped in asyncio.to_thread because simple-salesforce is
@@ -83,10 +83,11 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> VendorMatch | None:
-        """Find a vendor by exact email match on Salesforce Contact records.
+        """Find a vendor by exact email match on Vendor_Contact__c records.
 
-        Queries the Contact object for records where Email matches
-        exactly, then returns the parent Account as the vendor.
+        Queries the Vendor_Contact__c object for records where Email__c
+        matches exactly, then returns the parent Vendor_Account__c as
+        the vendor.
 
         Args:
             email: Email address to search for.
@@ -99,9 +100,10 @@ class SalesforceConnector:
         # Escape single quotes in email to prevent SOQL injection
         safe_email = email.replace("'", "\\'")
         soql = (
-            "SELECT Contact.AccountId, Account.Id, Account.Name "
-            "FROM Contact "
-            f"WHERE Email = '{safe_email}' "
+            "SELECT Vendor_Account__c, Vendor_Account__r.Id, "
+            "Vendor_Account__r.Name "
+            "FROM Vendor_Contact__c "
+            f"WHERE Email__c = '{safe_email}' "
             "LIMIT 1"
         )
 
@@ -127,7 +129,7 @@ class SalesforceConnector:
             return None
 
         record = records[0]
-        account = record.get("Account", {}) or {}
+        account = record.get("Vendor_Account__r", {}) or {}
         vendor_id = account.get("Id", "")
         vendor_name = account.get("Name", "")
 
@@ -145,19 +147,20 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> dict | None:
-        """Look up a vendor Account by Salesforce Account ID.
+        """Look up a vendor by Salesforce Vendor_Account__c ID.
 
         Args:
-            vendor_id: Salesforce Account ID.
+            vendor_id: Salesforce Vendor_Account__c record ID.
             correlation_id: Tracing ID.
 
         Returns:
-            Account record dict, or None if not found.
+            Vendor_Account__c record dict, or None if not found.
         """
         safe_id = vendor_id.replace("'", "\\'")
         soql = (
-            "SELECT Id, Name, Industry, Phone, Website, BillingCity "
-            f"FROM Account WHERE Id = '{safe_id}' "
+            "SELECT Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, "
+            "City__c "
+            f"FROM Vendor_Account__c WHERE Id = '{safe_id}' "
             "LIMIT 1"
         )
 
@@ -182,7 +185,7 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> VendorMatch | None:
-        """Find a vendor by fuzzy name match on Account records.
+        """Find a vendor by fuzzy name match on Vendor_Account__c records.
 
         Uses SOQL LIKE with wildcards for partial matching.
         This is the last resort in the 3-step fallback chain.
@@ -193,7 +196,7 @@ class SalesforceConnector:
 
         Returns:
             VendorMatch with match_method="fuzzy_name" if found,
-            None if no matching account exists.
+            None if no matching vendor account exists.
         """
         if not name or not name.strip():
             return None
@@ -202,7 +205,7 @@ class SalesforceConnector:
         safe_name = name.replace("'", "\\'").replace("%", "\\%")
         soql = (
             "SELECT Id, Name "
-            "FROM Account "
+            "FROM Vendor_Account__c "
             f"WHERE Name LIKE '%{safe_name}%' "
             "LIMIT 1"
         )
@@ -329,9 +332,9 @@ class SalesforceConnector:
         )
         return None
 
-    # --- Standard Account Methods (merged from local_vqm) ---
-    # The methods below query the Salesforce STANDARD Account object,
-    # NOT the custom Vendor_Account__c object used by methods above.
+    # --- Vendor_Account__c CRUD Methods ---
+    # All methods below query the custom Vendor_Account__c object
+    # in Salesforce. Used by the vendor management portal endpoints.
 
     @log_service_call
     async def get_all_active_vendors(
@@ -339,24 +342,23 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> list[dict]:
-        """Get all active vendors from the Salesforce STANDARD Account object.
+        """Get all active vendors from the Vendor_Account__c custom object.
 
-        This queries the standard Account object (NOT custom
-        Vendor_Account__c). Used by GET /vendors for the portal
-        vendor management table.
+        Used by GET /vendors for the portal vendor management table.
         """
         soql = (
-            "SELECT Id, Name, Vendor_ID__c, Website, Vendor_Tier__c, "
-            "Category__c, Payment_Terms__c, AnnualRevenue, "
+            "SELECT Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, "
+            "Category__c, Payment_Terms__c, Annual_Revenue__c, "
             "SLA_Response_Hours__c, SLA_Resolution_Days__c, "
             "Vendor_Status__c, Onboarded_Date__c, "
-            "BillingCity, BillingState, BillingCountry "
-            "FROM Account "
-            "WHERE Vendor_Status__c = 'Active'"
+            "City__c, State__c, Country__c "
+            "FROM Vendor_Account__c "
+            "WHERE Vendor_Status__c = 'Active' "
+            "ORDER BY Vendor_ID__c ASC"
         )
 
         logger.info(
-            "Salesforce SOQL: get_all_active_vendors (standard Account)",
+            "Salesforce SOQL: get_all_active_vendors (Vendor_Account__c)",
             tool="salesforce",
             correlation_id=correlation_id,
         )
@@ -373,7 +375,7 @@ class SalesforceConnector:
 
         records = result.get("records", [])
         logger.info(
-            "Active vendors retrieved from standard Account",
+            "Active vendors retrieved from Vendor_Account__c",
             tool="salesforce",
             result_count=len(records),
             correlation_id=correlation_id,
@@ -385,22 +387,333 @@ class SalesforceConnector:
                 "id": record.get("Id"),
                 "name": record.get("Name"),
                 "vendor_id": record.get("Vendor_ID__c"),
-                "website": record.get("Website"),
+                "website": record.get("Website__c"),
                 "vendor_tier": record.get("Vendor_Tier__c"),
                 "category": record.get("Category__c"),
                 "payment_terms": record.get("Payment_Terms__c"),
-                "annual_revenue": record.get("AnnualRevenue"),
+                "annual_revenue": record.get("Annual_Revenue__c"),
                 "sla_response_hours": record.get("SLA_Response_Hours__c"),
                 "sla_resolution_days": record.get("SLA_Resolution_Days__c"),
                 "vendor_status": record.get("Vendor_Status__c"),
                 "onboarded_date": record.get("Onboarded_Date__c"),
-                "billing_city": record.get("BillingCity"),
-                "billing_state": record.get("BillingState"),
-                "billing_country": record.get("BillingCountry"),
+                "billing_city": record.get("City__c"),
+                "billing_state": record.get("State__c"),
+                "billing_country": record.get("Country__c"),
             })
         return cleaned
 
+    async def _fetch_vendor_record(
+        self,
+        record_id: str,
+        *,
+        correlation_id: str = "",
+    ) -> dict:
+        """Fetch a single Vendor_Account__c record by its Salesforce ID.
+
+        Returns a dict with all portal-visible fields, matching the
+        same shape as get_all_active_vendors() output.
+        Used after create/update to return the full record to the caller.
+        """
+        safe_id = record_id.replace("'", "\\'")
+        soql = (
+            "SELECT Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, "
+            "Category__c, Payment_Terms__c, Annual_Revenue__c, "
+            "SLA_Response_Hours__c, SLA_Resolution_Days__c, "
+            "Vendor_Status__c, Onboarded_Date__c, "
+            "City__c, State__c, Country__c "
+            "FROM Vendor_Account__c "
+            f"WHERE Id = '{safe_id}' LIMIT 1"
+        )
+
+        try:
+            result = await asyncio.to_thread(self._get_client().query, soql)
+        except Exception:
+            logger.warning(
+                "Failed to fetch vendor record after create/update",
+                tool="salesforce",
+                record_id=record_id,
+                correlation_id=correlation_id,
+            )
+            return {}
+
+        records = result.get("records", [])
+        if not records:
+            return {}
+
+        record = records[0]
+        return {
+            "id": record.get("Id"),
+            "name": record.get("Name"),
+            "vendor_id": record.get("Vendor_ID__c"),
+            "website": record.get("Website__c"),
+            "vendor_tier": record.get("Vendor_Tier__c"),
+            "category": record.get("Category__c"),
+            "payment_terms": record.get("Payment_Terms__c"),
+            "annual_revenue": record.get("Annual_Revenue__c"),
+            "sla_response_hours": record.get("SLA_Response_Hours__c"),
+            "sla_resolution_days": record.get("SLA_Resolution_Days__c"),
+            "vendor_status": record.get("Vendor_Status__c"),
+            "onboarded_date": record.get("Onboarded_Date__c"),
+            "billing_city": record.get("City__c"),
+            "billing_state": record.get("State__c"),
+            "billing_country": record.get("Country__c"),
+        }
+
     @log_service_call
+    def _is_salesforce_record_id(self, value: str) -> bool:
+        """Check if a string looks like a Salesforce record ID.
+
+        Salesforce record IDs are 15 or 18 characters long.
+        For Vendor_Account__c (custom object), IDs start with
+        the object's key prefix (e.g., 'a0B' or similar).
+        Standard Account IDs start with '001'.
+
+        Vendor_ID__c values look like 'V-001', 'V-025' — short,
+        start with 'V-', clearly different from record IDs.
+        """
+        # Custom object record IDs are 15 or 18 chars but do NOT
+        # start with '001' — that prefix is for standard Account.
+        # We check length only; the 'V-' prefix distinguishes
+        # Vendor_ID__c values from any Salesforce record ID.
+        return len(value) in (15, 18) and not value.startswith("V-")
+
+    @log_service_call
+    async def get_next_vendor_id(
+        self,
+        *,
+        correlation_id: str = "",
+    ) -> str:
+        """Find the highest Vendor_ID__c and return the next one.
+
+        Vendor IDs follow the pattern V-001, V-002, ..., V-025.
+        This method queries all Vendor_Account__c records that have
+        a Vendor_ID__c value, extracts the numeric part, finds
+        the maximum, and returns V-{max+1} zero-padded to 3 digits.
+
+        If no vendors exist yet, returns 'V-001'.
+        """
+        soql = (
+            "SELECT Vendor_ID__c "
+            "FROM Vendor_Account__c "
+            "WHERE Vendor_ID__c != null "
+            "ORDER BY Vendor_ID__c DESC"
+        )
+
+        try:
+            result = await asyncio.to_thread(self._get_client().query, soql)
+        except Exception:
+            logger.exception(
+                "Salesforce query failed: get_next_vendor_id",
+                tool="salesforce",
+                correlation_id=correlation_id,
+            )
+            raise SalesforceConnectorError("Failed to query existing Vendor_ID__c values")
+
+        records = result.get("records", [])
+
+        if not records:
+            return "V-001"
+
+        # Extract numeric parts from all Vendor_ID__c values
+        # Format: V-001, V-002, ..., V-025
+        max_number = 0
+        for record in records:
+            vid = record.get("Vendor_ID__c", "")
+            if vid and vid.startswith("V-"):
+                try:
+                    num = int(vid.split("-", 1)[1])
+                    if num > max_number:
+                        max_number = num
+                except (ValueError, IndexError):
+                    # Skip malformed Vendor_ID__c values
+                    continue
+
+        next_number = max_number + 1
+        next_vendor_id = f"V-{next_number:03d}"
+
+        logger.info(
+            "Next Vendor_ID__c determined",
+            tool="salesforce",
+            current_max=max_number,
+            next_vendor_id=next_vendor_id,
+            correlation_id=correlation_id,
+        )
+
+        return next_vendor_id
+
+    @log_service_call
+    async def create_vendor_account(
+        self,
+        create_data: dict,
+        *,
+        correlation_id: str = "",
+    ) -> dict:
+        """Create a new Vendor_Account__c record in Salesforce.
+
+        Auto-generates the next Vendor_ID__c (V-XXX) by finding
+        the current highest number and incrementing by 1.
+
+        Args:
+            create_data: Dict of Salesforce field names and values.
+                         Must include 'Name' at minimum.
+            correlation_id: Tracing ID.
+
+        Returns:
+            Dict with salesforce_id, vendor_id, and name.
+        """
+        # Step 1: Get the next Vendor_ID__c
+        next_vendor_id = await self.get_next_vendor_id(
+            correlation_id=correlation_id,
+        )
+
+        # Step 2: Add the auto-generated Vendor_ID__c to the data
+        create_data["Vendor_ID__c"] = next_vendor_id
+
+        logger.info(
+            "Creating Vendor_Account__c record",
+            tool="salesforce",
+            vendor_id=next_vendor_id,
+            name=create_data.get("Name", ""),
+            correlation_id=correlation_id,
+        )
+
+        # Step 3: Create the Vendor_Account__c record in Salesforce
+        try:
+            result = await asyncio.to_thread(
+                self._get_client().Vendor_Account__c.create, create_data
+            )
+        except Exception as exc:
+            logger.exception(
+                "Vendor_Account__c creation failed",
+                tool="salesforce",
+                vendor_id=next_vendor_id,
+                correlation_id=correlation_id,
+            )
+            # Extract the actual Salesforce error message for better
+            # user feedback (e.g., "bad value for restricted picklist")
+            sf_detail = str(exc)
+            raise SalesforceConnectorError(
+                f"Vendor_Account__c creation failed for {create_data.get('Name', '')}. "
+                f"Salesforce error: {sf_detail}"
+            )
+
+        # simple-salesforce returns {'id': 'a0B...', 'success': True, 'errors': []}
+        salesforce_id = result.get("id", "")
+
+        logger.info(
+            "Vendor_Account__c record created",
+            tool="salesforce",
+            salesforce_id=salesforce_id,
+            vendor_id=next_vendor_id,
+            name=create_data.get("Name", ""),
+            correlation_id=correlation_id,
+        )
+
+        # Fetch the full record back so the API can return all fields
+        vendor_record = await self._fetch_vendor_record(
+            salesforce_id, correlation_id=correlation_id,
+        )
+
+        return {
+            "success": True,
+            "salesforce_id": salesforce_id,
+            "vendor_id": next_vendor_id,
+            "name": create_data.get("Name", ""),
+            "vendor_record": vendor_record,
+        }
+
+    @log_service_call
+    async def delete_vendor_account(
+        self,
+        vendor_id_field: str,
+        *,
+        correlation_id: str = "",
+    ) -> dict:
+        """Delete a Vendor_Account__c record from Salesforce.
+
+        Accepts EITHER a Salesforce record ID (e.g., 'a0Bal00002Ie1zjAAB')
+        OR a Vendor_ID__c value (e.g., 'V-001'). Detects which type was
+        passed and resolves to the record ID before deleting.
+
+        Args:
+            vendor_id_field: Salesforce record ID or Vendor_ID__c.
+            correlation_id: Tracing ID.
+
+        Returns:
+            Dict with success status and deleted vendor info.
+        """
+        is_record_id = self._is_salesforce_record_id(vendor_id_field)
+
+        if is_record_id:
+            record_id = vendor_id_field
+            logger.info(
+                "Salesforce delete: using record ID directly",
+                tool="salesforce",
+                record_id=record_id,
+                correlation_id=correlation_id,
+            )
+        else:
+            # Lookup by Vendor_ID__c to find the record ID
+            safe_id = vendor_id_field.replace("'", "\\'")
+            soql = (
+                "SELECT Id, Name, Vendor_ID__c "
+                "FROM Vendor_Account__c "
+                f"WHERE Vendor_ID__c = '{safe_id}' "
+                "LIMIT 1"
+            )
+
+            try:
+                result = await asyncio.to_thread(self._get_client().query, soql)
+            except Exception:
+                logger.exception(
+                    "Vendor_Account__c lookup for delete failed",
+                    tool="salesforce",
+                    vendor_id=vendor_id_field,
+                    correlation_id=correlation_id,
+                )
+                raise SalesforceConnectorError(
+                    f"SOQL query failed for Vendor_Account__c lookup: {vendor_id_field}"
+                )
+
+            records = result.get("records", [])
+            if not records:
+                raise SalesforceConnectorError(
+                    f"No Vendor_Account__c found with Vendor_ID__c = '{vendor_id_field}'"
+                )
+
+            record_id = records[0]["Id"]
+
+        # Delete the Vendor_Account__c record
+        try:
+            await asyncio.to_thread(
+                self._get_client().Vendor_Account__c.delete, record_id
+            )
+        except Exception:
+            logger.exception(
+                "Vendor_Account__c deletion failed",
+                tool="salesforce",
+                vendor_id=vendor_id_field,
+                record_id=record_id,
+                correlation_id=correlation_id,
+            )
+            raise SalesforceConnectorError(
+                f"Vendor_Account__c deletion failed for {vendor_id_field}"
+            )
+
+        logger.info(
+            "Vendor_Account__c record deleted",
+            tool="salesforce",
+            vendor_id=vendor_id_field,
+            record_id=record_id,
+            correlation_id=correlation_id,
+        )
+
+        return {
+            "success": True,
+            "vendor_id": vendor_id_field,
+            "record_id": record_id,
+        }
+
     async def update_vendor_account(
         self,
         vendor_id_field: str,
@@ -408,67 +721,88 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> dict:
-        """Update a vendor record in the Salesforce STANDARD Account object.
+        """Update a Vendor_Account__c record in Salesforce.
 
-        Finds the Account by its Vendor_ID__c custom field, then
-        applies the provided field updates.
+        Accepts EITHER a Salesforce record ID (e.g., 'a0Bal00002Ie1zjAAB')
+        OR a Vendor_ID__c value (e.g., 'V-001'). Detects which type was
+        passed and queries accordingly.
+
+        The GET /vendors endpoint returns the record ID as the 'id' field,
+        so most callers will pass a record ID.
         """
-        # Escape single quotes in vendor_id to prevent SOQL injection
-        safe_id = vendor_id_field.replace("'", "\\'")
-        soql = (
-            "SELECT Id, Name, Vendor_ID__c "
-            "FROM Account "
-            f"WHERE Vendor_ID__c = '{safe_id}' "
-            "LIMIT 1"
-        )
+        # Determine lookup strategy based on the ID format
+        is_record_id = self._is_salesforce_record_id(vendor_id_field)
 
-        logger.info(
-            "Salesforce SOQL: find Account for update",
-            tool="salesforce",
-            vendor_id=vendor_id_field,
-            correlation_id=correlation_id,
-        )
+        if is_record_id:
+            # Direct lookup by Salesforce record ID — no SOQL needed,
+            # just use the ID directly for the update call
+            record_id = vendor_id_field
 
-        try:
-            result = await asyncio.to_thread(self._get_client().query, soql)
-        except Exception:
-            logger.exception(
-                "Salesforce Account lookup failed",
+            logger.info(
+                "Salesforce update: using record ID directly",
+                tool="salesforce",
+                record_id=record_id,
+                correlation_id=correlation_id,
+            )
+        else:
+            # Lookup by Vendor_ID__c custom field (e.g., 'V-001')
+            safe_id = vendor_id_field.replace("'", "\\'")
+            soql = (
+                "SELECT Id, Name, Vendor_ID__c "
+                "FROM Vendor_Account__c "
+                f"WHERE Vendor_ID__c = '{safe_id}' "
+                "LIMIT 1"
+            )
+
+            logger.info(
+                "Salesforce SOQL: find Vendor_Account__c by Vendor_ID__c for update",
                 tool="salesforce",
                 vendor_id=vendor_id_field,
                 correlation_id=correlation_id,
             )
-            raise SalesforceConnectorError(
-                f"SOQL query failed for Account lookup: {vendor_id_field}"
-            )
 
-        records = result.get("records", [])
-        if not records:
-            raise SalesforceConnectorError(
-                f"No Account found with Vendor_ID__c = '{vendor_id_field}'"
-            )
+            try:
+                result = await asyncio.to_thread(self._get_client().query, soql)
+            except Exception:
+                logger.exception(
+                    "Vendor_Account__c lookup failed",
+                    tool="salesforce",
+                    vendor_id=vendor_id_field,
+                    correlation_id=correlation_id,
+                )
+                raise SalesforceConnectorError(
+                    f"SOQL query failed for Vendor_Account__c lookup: {vendor_id_field}"
+                )
 
-        record_id = records[0]["Id"]
+            records = result.get("records", [])
+            if not records:
+                raise SalesforceConnectorError(
+                    f"No Vendor_Account__c found with Vendor_ID__c = '{vendor_id_field}'"
+                )
+
+            record_id = records[0]["Id"]
 
         try:
             await asyncio.to_thread(
-                self._get_client().Account.update, record_id, update_data
+                self._get_client().Vendor_Account__c.update, record_id, update_data
             )
-        except Exception:
+        except Exception as exc:
             logger.exception(
-                "Salesforce Account update failed",
+                "Vendor_Account__c update failed",
                 tool="salesforce",
                 vendor_id=vendor_id_field,
                 record_id=record_id,
                 correlation_id=correlation_id,
             )
+            sf_detail = str(exc)
             raise SalesforceConnectorError(
-                f"Account update failed for {vendor_id_field}"
+                f"Vendor_Account__c update failed for {vendor_id_field}. "
+                f"Salesforce error: {sf_detail}"
             )
 
         updated_fields = list(update_data.keys())
         logger.info(
-            "Salesforce Account updated",
+            "Vendor_Account__c record updated",
             tool="salesforce",
             vendor_id=vendor_id_field,
             record_id=record_id,
@@ -476,8 +810,14 @@ class SalesforceConnector:
             correlation_id=correlation_id,
         )
 
+        # Fetch the full record back so the API can return all fields
+        vendor_record = await self._fetch_vendor_record(
+            record_id, correlation_id=correlation_id,
+        )
+
         return {
             "success": True,
             "vendor_id": vendor_id_field,
             "updated_fields": updated_fields,
+            "vendor_record": vendor_record,
         }

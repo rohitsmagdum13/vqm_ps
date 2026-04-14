@@ -211,7 +211,7 @@ class ContextLoadingNode:
     def _build_vendor_profile_from_salesforce(
         self, sf_data: dict, vendor_id: str
     ) -> VendorProfile:
-        """Build VendorProfile from Salesforce Account record."""
+        """Build VendorProfile from Salesforce Vendor_Account__c record."""
         return VendorProfile(
             vendor_id=vendor_id,
             vendor_name=sf_data.get("Name", "Unknown"),

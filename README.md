@@ -44,9 +44,11 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 - Path decision (KB match >= 80% = Path A, otherwise Path B)
 - SQS consumer pulls from both intake queues and feeds the graph
 
-**Vendor Management:**
-- GET /vendors — list all active vendors from Salesforce (25 vendors)
-- PUT /vendors/{vendor_id} — update vendor fields
+**Vendor Management (Salesforce Vendor_Account__c):**
+- GET /vendors — list all active vendors, sorted ascending (V-001 first)
+- POST /vendors — create a new vendor (auto-generates V-XXX ID, returns full record)
+- PUT /vendors/{vendor_id} — update vendor fields (returns full record after update)
+- DELETE /vendors/{vendor_id} — permanently delete a vendor
 
 **Infrastructure:**
 - PostgreSQL on RDS via SSH tunnel (6 schemas, 14+ tables, pgvector)
@@ -165,7 +167,10 @@ uv run ruff check .              # Linting
 ### Step 3: Test Any Endpoint
 
 All endpoints now send your JWT automatically. Try:
-- **GET /vendors** — returns 25 vendors from Salesforce
+- **GET /vendors** — returns vendors sorted V-001 to V-025
+- **POST /vendors** — create a vendor (all fields shown in Swagger example)
+- **PUT /vendors/V-001** — update a vendor (returns full record)
+- **DELETE /vendors/V-026** — delete a vendor
 - **GET /emails** — returns ingested email chains
 - **POST /queries** — submit a new vendor query
 
@@ -195,11 +200,13 @@ See `docs/api_testing_guide.md` for ready-to-use test examples.
 | `/emails/{query_id}` | GET | Bearer | Single email chain detail |
 | `/emails/{query_id}/attachments/{id}/download` | GET | Bearer | Presigned S3 download URL |
 
-### Vendor Management
+### Vendor Management (ADMIN only)
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
-| `/vendors` | GET | Bearer | List all active vendors from Salesforce |
-| `/vendors/{vendor_id}` | PUT | Bearer | Update vendor fields |
+| `/vendors` | GET | Bearer | List all active vendors (sorted V-001..V-NNN) |
+| `/vendors` | POST | Bearer | Create a new vendor (auto-generates V-XXX ID) |
+| `/vendors/{vendor_id}` | PUT | Bearer | Update vendor fields (returns full record) |
+| `/vendors/{vendor_id}` | DELETE | Bearer | Permanently delete a vendor |
 
 ### System
 | Endpoint | Method | Auth | Purpose |

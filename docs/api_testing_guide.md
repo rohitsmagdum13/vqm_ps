@@ -3,7 +3,7 @@
 Ready-to-use examples for testing every endpoint in Swagger UI.
 Copy-paste the JSON bodies directly into the Swagger form fields.
 
-Last updated: 2026-04-14
+Last updated: 2026-04-14 (updated with full vendor CRUD)
 
 ---
 
@@ -12,7 +12,7 @@ Last updated: 2026-04-14
 1. [Setup — Login and Authorize](#1-setup--login-and-authorize)
 2. [POST /queries — 5 Test Examples](#2-post-queries--5-test-examples)
 3. [GET /queries/{query_id} — Check Status](#3-get-queriesquery_id--check-status)
-4. [GET /vendors — List Vendors](#4-get-vendors--list-vendors)
+4. [Vendor CRUD — Full Lifecycle](#4-vendor-crud--full-lifecycle)
 5. [GET /emails — Email Dashboard](#5-get-emails--email-dashboard)
 6. [POST /auth/logout — End Session](#6-post-authlogout--end-session)
 7. [Understanding X-Vendor-ID](#7-understanding-x-vendor-id)
@@ -78,8 +78,8 @@ Now every request will automatically include `Authorization: Bearer <your-token>
 
 ### Available Vendor IDs
 
-Pick any of these for the `X-Vendor-ID` header. Each is a real
-Salesforce Account ID from your vendor list:
+Pick any of these for the `X-Vendor-ID` header. Get the actual
+IDs from GET /vendors — the `id` field of each vendor record:
 
 ```
   Vendor Name                  ID (use as X-Vendor-ID)       Tier
@@ -306,18 +306,239 @@ This means:
 
 ---
 
-## 4. GET /vendors — List Vendors
+## 4. Vendor CRUD — Full Lifecycle
+
+All vendor endpoints require **ADMIN role**. Non-admin users get 403.
+
+### 4a. GET /vendors — List All Vendors
 
 No parameters needed. Just click Execute.
 
-**Expected:** Array of 25 vendor objects from Salesforce, each with:
-- `id` — Salesforce Account ID (use this as X-Vendor-ID)
+**Expected:** Array of vendor objects from Vendor_Account__c,
+sorted ascending by Vendor_ID__c (V-001 first). Each vendor has:
+- `id` — Salesforce Vendor_Account__c record ID (use this as X-Vendor-ID)
 - `name` — Company name
-- `vendor_id` — Internal code (V-001 to V-025)
+- `vendor_id` — Internal code (V-001, V-002, etc.)
 - `vendor_tier` — PLATINUM, GOLD, SILVER, or BRONZE
+- `website` — Company website URL
 - `category` — Raw Materials, IT Services, Logistics, etc.
-- `sla_response_hours` — SLA target based on tier
-- `billing_city`, `billing_state`, `billing_country`
+- `payment_terms` — Net-30, Net-45, Net-60, etc.
+- `annual_revenue` — Annual revenue
+- `sla_response_hours` — SLA response target in hours
+- `sla_resolution_days` — SLA resolution target in days
+- `vendor_status` — ACTIVE or INACTIVE
+- `onboarded_date` — Date vendor was onboarded (YYYY-MM-DD)
+- `billing_city`, `billing_state`, `billing_country` — Location
+
+---
+
+### 4b. POST /vendors — Create a New Vendor
+
+**Body (minimum — only name is required):**
+```json
+{
+  "name": "TestCorp Industries"
+}
+```
+
+**Body (all fields — Swagger UI shows these as the example):**
+```json
+{
+  "name": "TestCorp Industries",
+  "website": "https://testcorp.com",
+  "vendor_tier": "Silver",
+  "category": "IT Services",
+  "payment_terms": "Net-30",
+  "annual_revenue": 2500000.0,
+  "sla_response_hours": 8.0,
+  "sla_resolution_days": 5.0,
+  "vendor_status": "Active",
+  "onboarded_date": "2026-04-14",
+  "billing_city": "Pune",
+  "billing_state": "Maharashtra",
+  "billing_country": "India"
+}
+```
+
+Delete any fields you don't need — only `name` is required.
+
+**Expected Response (201):**
+```json
+{
+  "success": true,
+  "salesforce_id": "a02al00000oA5XXAA0",
+  "vendor_id": "V-026",
+  "name": "TestCorp Industries",
+  "message": "Vendor 'TestCorp Industries' created with ID V-026",
+  "vendor": {
+    "id": "a02al00000oA5XXAA0",
+    "name": "TestCorp Industries",
+    "vendor_id": "V-026",
+    "website": "https://testcorp.com",
+    "vendor_tier": "Silver",
+    "category": "IT Services",
+    "payment_terms": "Net-30",
+    "annual_revenue": 2500000.0,
+    "sla_response_hours": 8.0,
+    "sla_resolution_days": 5.0,
+    "vendor_status": "Active",
+    "onboarded_date": "2026-04-14",
+    "billing_city": "Pune",
+    "billing_state": "Maharashtra",
+    "billing_country": "India"
+  }
+}
+```
+
+The `vendor` field shows the full record fetched back from Salesforce
+after creation — you can see exactly what was saved, including any
+defaults set by Salesforce.
+
+**What happens behind the scenes:**
+1. Pydantic validates the body (name is required)
+2. Python field names converted to Vendor_Account__c API names
+3. System queries all existing Vendor_ID__c values
+4. Finds the highest number (e.g., V-025 → 25)
+5. Auto-generates next ID: V-026
+6. Creates Vendor_Account__c in Salesforce with all provided fields + Vendor_ID__c
+7. Fetches the full record back from Salesforce
+8. Returns the record ID, generated vendor ID, and full vendor record
+
+**Important notes:**
+- `category` and `payment_terms` are **restricted picklists** in Salesforce.
+  You must use values that exist in the Salesforce picklist. Arbitrary
+  strings (like "Testing" or "Custom") will cause a 502 error.
+- `vendor_status` defaults to "Active" if not provided
+- Save the `vendor_id` from the response — you'll need it for update/delete
+
+---
+
+### 4c. PUT /vendors/{vendor_id} — Update a Vendor
+
+The `{vendor_id}` path parameter accepts two formats:
+- Salesforce record ID: `a02al00000oA5JOAA0`
+- Custom vendor code: `V-001`
+
+**Body (update one field):**
+```json
+{
+  "vendor_tier": "Gold"
+}
+```
+
+**Body (all available fields — Swagger UI shows these as the example):**
+```json
+{
+  "website": "https://updated-site.com",
+  "vendor_tier": "Gold",
+  "category": "IT Services",
+  "payment_terms": "Net-30",
+  "annual_revenue": 5000000,
+  "sla_response_hours": 8,
+  "sla_resolution_days": 3,
+  "vendor_status": "Active",
+  "onboarded_date": "2026-04-14",
+  "billing_city": "Mumbai",
+  "billing_state": "Maharashtra",
+  "billing_country": "India"
+}
+```
+
+Delete any fields you don't want to update — at least one must remain.
+
+**Expected Response (200):**
+```json
+{
+  "success": true,
+  "vendor_id": "V-001",
+  "updated_fields": ["Vendor_Tier__c", "Website__c", "City__c"],
+  "message": "Updated 3 field(s) for vendor V-001",
+  "vendor": {
+    "id": "a02al00000oA5JOAA0",
+    "name": "Acme Industrial Supplies",
+    "vendor_id": "V-001",
+    "website": "https://updated-site.com",
+    "vendor_tier": "Gold",
+    "category": "Raw Materials",
+    "payment_terms": "Net-30",
+    "annual_revenue": 5000000.0,
+    "sla_response_hours": 8.0,
+    "sla_resolution_days": 3.0,
+    "vendor_status": "Active",
+    "onboarded_date": "2024-01-15",
+    "billing_city": "Mumbai",
+    "billing_state": "Maharashtra",
+    "billing_country": "India"
+  }
+}
+```
+
+The `vendor` field shows the full record after the update — you can
+verify all fields, not just the ones you changed.
+
+**Validation rule:** At least one field must be provided. An empty
+body `{}` returns 422.
+
+---
+
+### 4d. DELETE /vendors/{vendor_id} — Delete a Vendor
+
+No body needed. Just provide the vendor ID in the path.
+
+**Examples:**
+```
+DELETE /vendors/V-026
+DELETE /vendors/001al00002KptijAAB
+```
+
+**Expected Response (200):**
+```json
+{
+  "success": true,
+  "vendor_id": "V-026",
+  "message": "Vendor V-026 deleted successfully"
+}
+```
+
+**WARNING:** This permanently deletes the Vendor_Account__c record
+from Salesforce. There is no undo. Use with caution.
+
+---
+
+### Full CRUD Test Cycle
+
+Test all four vendor operations in order:
+
+```
+Step 1: List vendors
+  GET /vendors
+  --> Sorted ascending: V-001 first, V-025 last
+  --> Note how many vendors exist (e.g., 25)
+
+Step 2: Create a new vendor
+  POST /vendors
+  Body: {"name":"CRUD Test Vendor","vendor_tier":"Bronze"}
+  --> Save vendor_id from response (e.g., V-026)
+  --> Check the "vendor" field — full record with all 15 fields
+
+Step 3: Verify it was created
+  GET /vendors
+  --> Should now show 26 vendors, V-026 at the end
+
+Step 4: Update the new vendor
+  PUT /vendors/V-026
+  Body: {"vendor_tier":"Gold","website":"https://test.com"}
+  --> Check "updated_fields" — should show 2 entries
+  --> Check "vendor" field — full record showing new values
+
+Step 5: Delete the test vendor
+  DELETE /vendors/V-026
+  --> Should return success
+
+Step 6: Verify it was deleted
+  GET /vendors
+  --> Should be back to 25 vendors, no V-026
+```
 
 ---
 
@@ -401,7 +622,7 @@ token returns 401 "Invalid or expired token". You'll need to login again.
 ### What Is It?
 
 X-Vendor-ID is a request header that identifies **which vendor** is making
-the request. It's the Salesforce Account ID of the vendor.
+the request. It's the Salesforce Vendor_Account__c record ID of the vendor.
 
 ### Why Does It Exist?
 
@@ -425,13 +646,13 @@ From **GET /vendors** response. Each vendor has an `id` field:
 
 ```json
 {
-  "id": "001al00002Ie1zjAAB",       <-- THIS is the X-Vendor-ID
+  "id": "a02al00000oA5JOAA0",       <-- THIS is the X-Vendor-ID
   "name": "Acme Industrial Supplies",
   "vendor_id": "V-001"               <-- this is just a display code
 }
 ```
 
-**Important:** Use the `id` field (Salesforce Account ID), NOT the `vendor_id` field.
+**Important:** Use the `id` field (Salesforce record ID), NOT the `vendor_id` field.
 
 ### What Does It Do in Each Endpoint?
 
@@ -450,14 +671,17 @@ From **GET /vendors** response. Each vendor has an `id` field:
 
 ## 8. Expected Responses Reference
 
-| Endpoint | Success | Duplicate | Not Found | Unauthorized | Validation Error |
-|----------|---------|-----------|-----------|-------------|-----------------|
-| POST /auth/login | 200 + JWT | — | — | 401 bad credentials | 422 missing fields |
-| POST /auth/logout | 200 | — | — | 401 no token | — |
-| POST /queries | 201 + query_id | 409 | — | 401 | 422 subject too short |
-| GET /queries/{id} | 200 + status | — | 404 | 401 | — |
-| GET /vendors | 200 + array | — | — | 401 | — |
-| GET /emails | 200 + chains | — | — | 401 | 422 bad filter |
+| Endpoint | Success | Duplicate | Not Found | Unauth | Forbidden | Validation |
+|----------|---------|-----------|-----------|--------|-----------|------------|
+| POST /auth/login | 200 + JWT | — | — | 401 | — | 422 |
+| POST /auth/logout | 200 | — | — | 401 | — | — |
+| GET /vendors | 200 + array (sorted V-001...) | — | — | 401 | 403 | — |
+| POST /vendors | 201 + full vendor record | — | — | 401 | 403 | 422 no name |
+| PUT /vendors/{id} | 200 + full vendor record | — | — | 401 | 403 | 422 empty body |
+| DELETE /vendors/{id} | 200 + success | — | — | 401 | 403 | — |
+| POST /queries | 201 + query_id | 409 | — | 401 | — | 422 |
+| GET /queries/{id} | 200 + status | — | 404 | 401 | — | — |
+| GET /emails | 200 + chains | — | — | 401 | — | 422 bad filter |
 
 ---
 
@@ -472,6 +696,13 @@ From **GET /vendors** response. Each vendor has an `id` field:
 
 **Cause:** Token expired (30 min) or you logged out.
 **Fix:** Login again (POST /auth/login) and re-authorize with the new token.
+
+### 403 "Admin access required"
+
+**Cause:** You're logged in but your role is VENDOR or REVIEWER, not ADMIN.
+All vendor CRUD endpoints (GET/POST/PUT/DELETE /vendors) require ADMIN role.
+**Fix:** Login with an admin account. The response includes your current role
+in the message (e.g., "Your role: VENDOR") so you can see what you logged in as.
 
 ### 404 "Query not found"
 

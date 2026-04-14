@@ -41,8 +41,8 @@ class TestFindVendorByEmail:
         sf_connector._sf.query.return_value = _sf_query_result(
             [
                 {
-                    "Account": {"Id": "001ABC", "Name": "TechNova Solutions"},
-                    "AccountId": "001ABC",
+                    "Vendor_Account__r": {"Id": "001ABC", "Name": "TechNova Solutions"},
+                    "Vendor_Account__c": "001ABC",
                 }
             ]
         )
@@ -118,8 +118,8 @@ class TestIdentifyVendor:
         sf_connector._sf.query.return_value = _sf_query_result(
             [
                 {
-                    "Account": {"Id": "001ABC", "Name": "TechNova Solutions"},
-                    "AccountId": "001ABC",
+                    "Vendor_Account__r": {"Id": "001ABC", "Name": "TechNova Solutions"},
+                    "Vendor_Account__c": "001ABC",
                 }
             ]
         )
@@ -174,8 +174,8 @@ class TestIdentifyVendor:
             _sf_query_result(  # Step 2: extracted email found
                 [
                     {
-                        "Account": {"Id": "001BODY", "Name": "BodyCorp"},
-                        "AccountId": "001BODY",
+                        "Vendor_Account__r": {"Id": "001BODY", "Name": "BodyCorp"},
+                        "Vendor_Account__c": "001BODY",
                     }
                 ]
             ),

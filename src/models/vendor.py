@@ -9,10 +9,11 @@ determines SLA targets and priority multipliers.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class VendorTier(BaseModel):
@@ -72,21 +73,21 @@ class VendorMatch(BaseModel):
 
 # --- Vendor CRUD Models (merged from local_vqm) ---
 # These models are used by the vendor management portal endpoints
-# (GET /vendors, PUT /vendors/{vendor_id}). They map to the
-# Salesforce STANDARD Account object — NOT the custom
-# Vendor_Account__c object used by the AI pipeline above.
+# (GET /vendors, PUT /vendors/{vendor_id}, POST /vendors,
+# DELETE /vendors/{vendor_id}). They map to the Salesforce
+# custom Vendor_Account__c object.
 
 
 class VendorAccountData(BaseModel):
-    """Full vendor record from the Salesforce standard Account object.
+    """Full vendor record from the Salesforce Vendor_Account__c custom object.
 
     Returned by GET /vendors. Contains all fields that the portal
     displays in the vendor management table.
     """
 
-    id: str = Field(description="Salesforce Account record ID")
+    id: str = Field(description="Salesforce Vendor_Account__c record ID")
     name: str = Field(description="Account name (company name)")
-    vendor_id: str | None = Field(default=None, description="Custom Vendor_ID__c field on Account")
+    vendor_id: str | None = Field(default=None, description="Custom Vendor_ID__c field on Vendor_Account__c")
     website: str | None = Field(default=None, description="Company website URL")
     vendor_tier: str | None = Field(default=None, description="Vendor tier (Vendor_Tier__c)")
     category: str | None = Field(default=None, description="Vendor category (Category__c)")
@@ -96,24 +97,24 @@ class VendorAccountData(BaseModel):
     sla_resolution_days: float | None = Field(default=None, description="SLA resolution time in days")
     vendor_status: str | None = Field(default=None, description="Vendor status: Active, Inactive")
     onboarded_date: str | None = Field(default=None, description="Date vendor was onboarded")
-    billing_city: str | None = Field(default=None, description="BillingCity")
-    billing_state: str | None = Field(default=None, description="BillingState")
-    billing_country: str | None = Field(default=None, description="BillingCountry")
+    billing_city: str | None = Field(default=None, description="City (City__c)")
+    billing_state: str | None = Field(default=None, description="State (State__c)")
+    billing_country: str | None = Field(default=None, description="Country (Country__c)")
 
 
 VENDOR_UPDATABLE_FIELDS: set[str] = {
-    "Website",
+    "Website__c",
     "Vendor_Tier__c",
     "Category__c",
     "Payment_Terms__c",
-    "AnnualRevenue",
+    "Annual_Revenue__c",
     "SLA_Response_Hours__c",
     "SLA_Resolution_Days__c",
     "Vendor_Status__c",
     "Onboarded_Date__c",
-    "BillingCity",
-    "BillingState",
-    "BillingCountry",
+    "City__c",
+    "State__c",
+    "Country__c",
 }
 
 
@@ -123,18 +124,48 @@ class VendorUpdateRequest(BaseModel):
     At least one field must be provided.
     """
 
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "website": "https://example.com",
+                "vendor_tier": "Gold",
+                "category": "IT Services",
+                "payment_terms": "Net-30",
+                "annual_revenue": 5000000,
+                "sla_response_hours": 8,
+                "sla_resolution_days": 3,
+                "vendor_status": "Active",
+                "onboarded_date": "2026-04-14",
+                "billing_city": "Mumbai",
+                "billing_state": "Maharashtra",
+                "billing_country": "India",
+            },
+        },
+    )
+
     website: str | None = Field(default=None, description="Company website URL")
-    vendor_tier: str | None = Field(default=None, description="Vendor tier")
-    category: str | None = Field(default=None, description="Vendor category")
-    payment_terms: str | None = Field(default=None, description="Payment terms")
+    vendor_tier: str | None = Field(default=None, description="Vendor tier (Platinum, Gold, Silver, Bronze)")
+    category: str | None = Field(default=None, description="Vendor category (must match Salesforce picklist)")
+    payment_terms: str | None = Field(default=None, description="Payment terms (must match Salesforce picklist)")
     annual_revenue: float | None = Field(default=None, description="Annual revenue")
     sla_response_hours: float | None = Field(default=None, description="SLA response hours")
     sla_resolution_days: float | None = Field(default=None, description="SLA resolution days")
-    vendor_status: str | None = Field(default=None, description="Vendor status")
-    onboarded_date: str | None = Field(default=None, description="Onboarded date")
-    billing_city: str | None = Field(default=None, description="Billing city")
-    billing_state: str | None = Field(default=None, description="Billing state")
-    billing_country: str | None = Field(default=None, description="Billing country")
+    vendor_status: str | None = Field(default=None, description="Vendor status (Active, Inactive)")
+    onboarded_date: str | None = Field(default=None, description="Onboarded date (YYYY-MM-DD)")
+    billing_city: str | None = Field(default=None, description="City")
+    billing_state: str | None = Field(default=None, description="State")
+    billing_country: str | None = Field(default=None, description="Country")
+
+    @field_validator("onboarded_date")
+    @classmethod
+    def validate_date_format(cls, v: str | None) -> str | None:
+        """Validate onboarded_date is YYYY-MM-DD format if provided."""
+        if v is None:
+            return v
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            msg = "onboarded_date must be in YYYY-MM-DD format (e.g., 2026-04-14)"
+            raise ValueError(msg)
+        return v
 
     @model_validator(mode="after")
     def at_least_one_field(self) -> VendorUpdateRequest:
@@ -146,20 +177,20 @@ class VendorUpdateRequest(BaseModel):
         return self
 
     def to_salesforce_fields(self) -> dict:
-        """Convert snake_case Python fields to Salesforce API field names."""
+        """Convert snake_case Python fields to Vendor_Account__c field names."""
         field_mapping = {
-            "website": "Website",
+            "website": "Website__c",
             "vendor_tier": "Vendor_Tier__c",
             "category": "Category__c",
             "payment_terms": "Payment_Terms__c",
-            "annual_revenue": "AnnualRevenue",
+            "annual_revenue": "Annual_Revenue__c",
             "sla_response_hours": "SLA_Response_Hours__c",
             "sla_resolution_days": "SLA_Resolution_Days__c",
             "vendor_status": "Vendor_Status__c",
             "onboarded_date": "Onboarded_Date__c",
-            "billing_city": "BillingCity",
-            "billing_state": "BillingState",
-            "billing_country": "BillingCountry",
+            "billing_city": "City__c",
+            "billing_state": "State__c",
+            "billing_country": "Country__c",
         }
         result = {}
         for python_name, sf_name in field_mapping.items():
@@ -170,9 +201,127 @@ class VendorUpdateRequest(BaseModel):
 
 
 class VendorUpdateResult(BaseModel):
-    """Response body for PUT /vendors/{vendor_id}."""
+    """Response body for PUT /vendors/{vendor_id}.
+
+    Returns the full vendor record fetched back from Salesforce
+    after the update, so the caller sees the current state.
+    """
 
     success: bool = Field(description="Whether the update succeeded")
     vendor_id: str = Field(description="The Vendor_ID__c that was updated")
     updated_fields: list[str] = Field(description="List of Salesforce field names that were updated")
+    message: str = Field(description="Human-readable result message")
+    vendor: VendorAccountData | None = Field(
+        default=None,
+        description="Full vendor record from Salesforce after update",
+    )
+
+
+class VendorCreateRequest(BaseModel):
+    """Request body for POST /vendors (admin only).
+
+    Only 'name' is required. All other fields are optional.
+    The vendor_id (V-XXX) is auto-generated by querying the
+    highest existing Vendor_ID__c in Salesforce and incrementing.
+    """
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "name": "NewVendor Corp",
+                "website": "https://newvendor.com",
+                "vendor_tier": "Silver",
+                "category": "IT Services",
+                "payment_terms": "Net-30",
+                "annual_revenue": 5000000,
+                "sla_response_hours": 12,
+                "sla_resolution_days": 5,
+                "vendor_status": "Active",
+                "onboarded_date": "2026-04-14",
+                "billing_city": "Pune",
+                "billing_state": "Maharashtra",
+                "billing_country": "India",
+            },
+        },
+    )
+
+    name: str = Field(description="Company/vendor name (required)")
+    website: str | None = Field(default=None, description="Company website URL")
+    vendor_tier: str | None = Field(default=None, description="Platinum, Gold, Silver, or Bronze")
+    category: str | None = Field(default=None, description="Vendor category (must match Salesforce picklist)")
+    payment_terms: str | None = Field(default=None, description="Payment terms (must match Salesforce picklist)")
+    annual_revenue: float | None = Field(default=None, description="Annual revenue")
+    sla_response_hours: float | None = Field(default=None, description="SLA response hours")
+    sla_resolution_days: float | None = Field(default=None, description="SLA resolution days")
+    vendor_status: str | None = Field(default="Active", description="Vendor status (Active, Inactive)")
+    onboarded_date: str | None = Field(default=None, description="Onboarded date (YYYY-MM-DD)")
+    billing_city: str | None = Field(default=None, description="City")
+    billing_state: str | None = Field(default=None, description="State")
+    billing_country: str | None = Field(default=None, description="Country")
+
+    @field_validator("onboarded_date")
+    @classmethod
+    def validate_date_format(cls, v: str | None) -> str | None:
+        """Validate onboarded_date is YYYY-MM-DD format if provided."""
+        if v is None:
+            return v
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", v):
+            msg = "onboarded_date must be in YYYY-MM-DD format (e.g., 2026-04-14)"
+            raise ValueError(msg)
+        return v
+
+    def to_salesforce_fields(self) -> dict:
+        """Convert Python fields to Vendor_Account__c field names.
+
+        Name is always included. Vendor_ID__c is NOT included here
+        because it is auto-generated by the connector.
+        """
+        # Name is a field on the Vendor_Account__c custom object
+        sf_data: dict = {"Name": self.name}
+
+        field_mapping = {
+            "website": "Website__c",
+            "vendor_tier": "Vendor_Tier__c",
+            "category": "Category__c",
+            "payment_terms": "Payment_Terms__c",
+            "annual_revenue": "Annual_Revenue__c",
+            "sla_response_hours": "SLA_Response_Hours__c",
+            "sla_resolution_days": "SLA_Resolution_Days__c",
+            "vendor_status": "Vendor_Status__c",
+            "onboarded_date": "Onboarded_Date__c",
+            "billing_city": "City__c",
+            "billing_state": "State__c",
+            "billing_country": "Country__c",
+        }
+        for python_name, sf_name in field_mapping.items():
+            value = getattr(self, python_name)
+            if value is not None:
+                sf_data[sf_name] = value
+        return sf_data
+
+
+class VendorCreateResult(BaseModel):
+    """Response body for POST /vendors.
+
+    Returns the full vendor record fetched back from Salesforce
+    after creation, so the caller sees all field values including
+    defaults set by Salesforce.
+    """
+
+    success: bool = Field(description="Whether the create succeeded")
+    salesforce_id: str = Field(description="Salesforce Vendor_Account__c record ID")
+    vendor_id: str = Field(description="Auto-generated Vendor_ID__c (V-026, etc.)")
+    name: str = Field(description="Vendor name that was created")
+    message: str = Field(description="Human-readable result message")
+    vendor: VendorAccountData | None = Field(
+        default=None,
+        description="Full vendor record from Salesforce after creation",
+    )
+
+
+class VendorDeleteResult(BaseModel):
+    """Response body for DELETE /vendors/{vendor_id}."""
+
+    success: bool = Field(description="Whether the delete succeeded")
+    vendor_id: str = Field(description="The vendor ID that was deleted")
     message: str = Field(description="Human-readable result message")
