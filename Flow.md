@@ -91,34 +91,59 @@ File: `src/connectors/salesforce.py` -> `SalesforceConnector.identify_vendor()`
 
 ## Portal Path (Steps P1 → P6)
 
-### Trigger: Vendor submits query via POST /queries
+### Frontend: Angular Portal (Phase 7 — IMPLEMENTED)
 
-File: `src/intake/routes.py` -> `submit_query(request, submission)`
+The vendor portal is an Angular 17+ standalone app in `frontend/`. Zero CSS — browser defaults only. Uses real JWT auth.
+
+| Step | Route | What happens | Server call |
+|------|-------|-------------|-------------|
+| P1 — Login | /login | Username/email + password form | POST /auth/login → JWT |
+| P2 — Dashboard | /portal | KPIs + query list table | GET /dashboard/kpis + GET /queries |
+| P3 — Select Type | /new-query-type | Pick query type (radio/select) | None (browser only) |
+| P4 — Details | /new-query-details | Subject, description, priority, reference | None (browser only) |
+| P5+P6 — Review & Submit | /new-query-review | Review all fields, submit | POST /queries |
+| — Query Detail | /query-status/:id | Full query info | GET /queries/{id} |
+
+**Auth flow:** JWT token + X-Vendor-ID (= tenant from login response) injected by Angular HTTP interceptor on every request. Token auto-refresh captured via X-New-Token response header.
+
+**Key files:**
+- `frontend/src/app/services/auth.service.ts` — login, logout, token management
+- `frontend/src/app/services/query.service.ts` — all query HTTP calls
+- `frontend/src/app/services/wizard.service.ts` — multi-step form state
+- `frontend/src/app/interceptors/auth.interceptor.ts` — Bearer + X-Vendor-ID injection
+- `frontend/src/app/guards/auth.guard.ts` — route protection
+
+### Backend: Portal Submission
+
+File: `src/api/routes/queries.py` -> `submit_query(request, submission)`
 
 **Input:** HTTP POST with JSON body (validated as `QuerySubmission` from `src/models/query.py`), X-Vendor-ID header
-**Output:** `{"query_id": "VQ-2026-XXXX", "status": "RECEIVED"}` (HTTP 201)
+**Output:** `{"query_id": "VQ-2026-XXXX", "status": "RECEIVED", "created_at": "..."}` (HTTP 201)
 
 ### Processing Steps
 
-File: `src/intake/portal_intake.py` -> `PortalIntakeService.submit_query(submission, vendor_id)`
+File: `src/services/portal_submission.py` -> `PortalIntakeService.submit_query(submission, vendor_id)`
 
 | Step | What it does |
 |------|-------------|
 | 1 | Generate SHA-256 idempotency key from vendor_id + subject + description |
 | 2 | Check idempotency via `postgres.check_idempotency(key, "portal")` → DuplicateQueryError if exists (HTTP 409) |
 | 3 | Generate query_id (VQ-2026-XXXX) and execution_id (UUID v4) |
-| 4 | INSERT into workflow.case_execution (status=RECEIVED, source=portal) |
-| 5 | Build UnifiedQueryPayload (thread_status always "NEW" for portal) |
-| 6a | [NON-CRITICAL] Publish "QueryReceived" event to EventBridge |
-| 6b | [CRITICAL] Enqueue UnifiedQueryPayload to vqms-query-intake-queue via SQS |
+| 4 | Calculate SLA deadline based on priority (Critical=4h, High=8h, Medium=24h, Low=48h) |
+| 5 | INSERT into workflow.case_execution (status=RECEIVED, source=portal) — workflow state tracking |
+| 6 | INSERT into intake.portal_queries (subject, query_type, priority, description, reference_number, sla_deadline) — raw submission data |
+| 7 | Build UnifiedQueryPayload (thread_status always "NEW" for portal) |
+| 8a | [NON-CRITICAL] Publish "QueryReceived" event to EventBridge |
+| 8b | [CRITICAL] Enqueue UnifiedQueryPayload to vqms-query-intake-queue via SQS |
 
-### Query Status Lookup
+### Portal API Endpoints
 
-File: `src/intake/routes.py` -> `get_query_status(request, query_id)`
-
-- GET /queries/{query_id} with X-Vendor-ID header
-- Queries workflow.case_execution WHERE query_id=$1 AND vendor_id=$2
-- Returns 404 if not found or vendor mismatch (security: vendor can only see own queries)
+| Endpoint | File | Purpose |
+|----------|------|---------|
+| GET /queries | `src/api/routes/queries.py` -> `list_queries()` | List all queries for a vendor (newest first) |
+| POST /queries | `src/api/routes/queries.py` -> `submit_query()` | Submit a new query |
+| GET /queries/{query_id} | `src/api/routes/queries.py` -> `get_query_status()` | Full query detail (vendor can only see own queries) |
+| GET /dashboard/kpis | `src/api/routes/portal_dashboard.py` -> `get_kpis()` | KPIs: open, resolved, avg resolution hours, total |
 
 ---
 

@@ -1,0 +1,22 @@
+<h1>New Query — Step 3: Review &amp; Submit</h1>
+
+<div *ngIf="!submitted">
+  <p><strong>Query Type:</strong> {{ wizard.queryType }}</p>
+  <p><strong>Subject:</strong> {{ wizard.subject }}</p>
+  <p><strong>Description:</strong> {{ wizard.description }}</p>
+  <p><strong>Priority:</strong> {{ wizard.priority }}</p>
+  <p *ngIf="wizard.referenceNumber"><strong>Reference:</strong> {{ wizard.referenceNumber }}</p>
+  <hr>
+  <button (click)="back()">Back</button>
+  <button (click)="submit()">Submit Query</button>
+  <p *ngIf="error" style="color:red">{{ error }}</p>
+</div>
+
+<div *ngIf="submitted && result">
+  <h2>Query Submitted Successfully</h2>
+  <p><strong>Query ID:</strong> {{ result.query_id }}</p>
+  <p><strong>Status:</strong> {{ result.status }}</p>
+  <p><strong>Created At:</strong> {{ result.created_at }}</p>
+  <hr>
+  <button (click)="goToPortal()">Back to Portal</button>
+</div>

@@ -33,6 +33,7 @@ sys.path.insert(0, "src")
 from api.middleware.auth_middleware import AuthMiddleware
 from api.routes.auth import router as auth_router
 from api.routes.dashboard import router as dashboard_router
+from api.routes.portal_dashboard import router as portal_dashboard_router
 from api.routes.queries import router as queries_router
 from api.routes.vendors import router as vendors_router
 from api.routes.webhooks import router as webhooks_router
@@ -210,21 +211,21 @@ app = FastAPI(
 
 # --- Middleware ---
 
-# CORS: Allow Angular frontend (localhost:4200) and dev tools
+# Middleware execution order: last registered runs FIRST on requests.
+# So register AuthMiddleware first, CORSMiddleware second.
+# Request flow: CORSMiddleware (handles OPTIONS preflight) → AuthMiddleware → route handler.
+
+app.add_middleware(AuthMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:4200",  # Angular dev server
-        "http://localhost:3000",  # Alternative frontend
-        "http://127.0.0.1:4200",
-    ],
+    # Dev mode: allow all localhost origins (Angular may pick random ports)
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-New-Token"],
 )
-
-# JWT Auth middleware — skips /health, /auth/login, /docs, /webhooks/
-app.add_middleware(AuthMiddleware)
 
 
 # --- Security Headers Middleware ---
@@ -302,6 +303,7 @@ app.include_router(queries_router)
 app.include_router(vendors_router)
 app.include_router(webhooks_router)
 app.include_router(dashboard_router)
+app.include_router(portal_dashboard_router)
 
 
 # --- Swagger UI: Authorize Button (Bearer JWT) ---

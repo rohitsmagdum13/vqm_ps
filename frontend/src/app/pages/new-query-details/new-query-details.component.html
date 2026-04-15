@@ -1,0 +1,20 @@
+<h1>New Query — Step 2: Details</h1>
+
+<div>
+  <label>Subject:</label><br>
+  <input type="text" [(ngModel)]="subject" required size="60"><br><br>
+
+  <label>Description:</label><br>
+  <textarea [(ngModel)]="description" required rows="6" cols="60"></textarea><br><br>
+
+  <label>Priority:</label><br>
+  <select [(ngModel)]="priority">
+    <option *ngFor="let p of priorities" [value]="p">{{ p }}</option>
+  </select><br><br>
+
+  <label>Reference Number (optional):</label><br>
+  <input type="text" [(ngModel)]="referenceNumber" size="40"><br><br>
+</div>
+
+<button (click)="back()">Back</button>
+<button (click)="next()" [disabled]="!subject || !description">Next</button>

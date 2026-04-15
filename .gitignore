@@ -126,12 +126,24 @@ data/storage/
 *.ipynb_meta
 
 # ===========================
-# Angular frontend (if present)
+# Angular frontend
 # ===========================
 frontend/node_modules/
 frontend/dist/
+frontend/tmp/
+frontend/out-tsc/
+frontend/bazel-out/
 frontend/.angular/
 frontend/.cache/
+frontend/.sass-cache/
+frontend/connect.lock
+frontend/coverage/
+frontend/libpeerconnection.log
+frontend/testem.log
+frontend/typings/
+frontend/.history/
+frontend/npm-debug.log
+frontend/yarn-error.log
 
 # ===========================
 # Misc

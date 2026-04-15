@@ -41,6 +41,14 @@ class TimeHelper:
         """
         return datetime.now(_IST).replace(tzinfo=None)
 
+    @staticmethod
+    def ist_now_offset(*, hours: int = 0) -> datetime:
+        """Return IST now plus the given number of hours.
+
+        Used for calculating SLA deadlines based on priority.
+        """
+        return TimeHelper.ist_now() + timedelta(hours=hours)
+
 
 class IdGenerator:
     """Unique ID generation for VQMS entities.

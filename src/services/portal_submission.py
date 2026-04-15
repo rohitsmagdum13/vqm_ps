@@ -106,7 +106,18 @@ class PortalIntakeService:
         execution_id = IdGenerator.generate_execution_id()
         now = TimeHelper.ist_now()
 
-        # Write case_execution record to database
+        # Calculate SLA deadline based on priority
+        # These are default SLA hours — configurable in production
+        sla_hours_by_priority = {
+            "LOW": 48,
+            "MEDIUM": 24,
+            "HIGH": 8,
+            "CRITICAL": 4,
+        }
+        sla_hours = sla_hours_by_priority.get(submission.priority, 24)
+        sla_deadline = TimeHelper.ist_now_offset(hours=sla_hours)
+
+        # Write case_execution record (workflow state tracking)
         await self._postgres.execute(
             """
             INSERT INTO workflow.case_execution
@@ -120,6 +131,27 @@ class PortalIntakeService:
             vendor_id,
             "portal",
             "RECEIVED",
+            now,
+            now,
+        )
+
+        # Write portal query details (intake data — what the vendor submitted)
+        # Separate from workflow state, same pattern as intake.email_messages
+        await self._postgres.execute(
+            """
+            INSERT INTO intake.portal_queries
+            (query_id, vendor_id, query_type, subject, description,
+             priority, reference_number, sla_deadline, created_at, updated_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            """,
+            query_id,
+            vendor_id,
+            submission.query_type,
+            submission.subject,
+            submission.description,
+            submission.priority,
+            submission.reference_number,
+            sla_deadline,
             now,
             now,
         )

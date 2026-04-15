@@ -1,0 +1,37 @@
+<h1>Vendor Portal</h1>
+<p>Welcome, {{ email }}</p>
+<p>Vendor ID: {{ vendorId }}</p>
+<hr>
+
+<h2>Dashboard</h2>
+<p>
+  Open: {{ kpis.open_queries }} |
+  Resolved: {{ kpis.resolved_queries }} |
+  Avg Resolution: {{ kpis.avg_resolution_hours }} hours |
+  Total: {{ kpis.total_queries }}
+</p>
+
+<button (click)="newQuery()">+ New Query</button>
+<hr>
+
+<h2>Recent Queries</h2>
+<p *ngIf="error">{{ error }}</p>
+<p *ngIf="queries.length === 0 && !error">No queries yet.</p>
+<table border="1" *ngIf="queries.length > 0">
+  <tr>
+    <th>Query ID</th>
+    <th>Subject</th>
+    <th>Type</th>
+    <th>Status</th>
+    <th>Priority</th>
+    <th>Date</th>
+  </tr>
+  <tr *ngFor="let q of queries">
+    <td><a [routerLink]="['/query-status', q.query_id]">{{ q.query_id }}</a></td>
+    <td>{{ q.subject || '-' }}</td>
+    <td>{{ q.query_type || '-' }}</td>
+    <td>{{ q.status }}</td>
+    <td>{{ q.priority || '-' }}</td>
+    <td>{{ q.created_at }}</td>
+  </tr>
+</table>

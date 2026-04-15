@@ -71,7 +71,7 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 | Cloud | AWS (S3, SQS, EventBridge, Cognito) |
 | Integrations | Microsoft Graph API (email), Salesforce CRM (vendors), ServiceNow ITSM (tickets) |
 | Auth | JWT (HMAC-SHA256) via python-jose, werkzeug password hashing |
-| Frontend | Angular 17+ (Phase 7 — not yet started) |
+| Frontend | Angular 17+ (standalone components, zero CSS — browser defaults) |
 | Package Manager | uv (never use pip directly) |
 
 ---
@@ -125,13 +125,43 @@ GRAPH_API_CLIENT_ID=<azure-client-id>
 GRAPH_API_MAILBOX=vendorsupport@yourcompany.com
 ```
 
-### Run the Server
+### Run the Backend
+
+**Important:** Port 8000 may be occupied by the old `vqm` project. Use port 8002 (or any free port) for this project.
 
 ```bash
-uv run uvicorn main:app --reload --port 8001
+# Terminal 1: Start the backend
+uv run uvicorn main:app --reload --port 8002
 ```
 
-Then open: http://localhost:8001/docs (Swagger UI)
+Then open: http://localhost:8002/docs (Swagger UI)
+
+Verify health: `curl http://localhost:8002/health` — should return `"database":"connected"`.
+
+### Run the Frontend
+
+The frontend's API URL is configured in `frontend/src/environments/environment.ts`. Make sure `apiUrl` matches the backend port.
+
+```bash
+# Terminal 2: Start the frontend
+cd frontend
+npm install          # First time only
+npx ng serve --port 4200
+```
+
+Then open: http://localhost:4200/login
+
+### Run Both (Quick Reference)
+
+```bash
+# Terminal 1 (backend)
+cd C:\Users\ROHIT\Work\Office\Hex_Proj\Main\vqm_ps
+uv run uvicorn main:app --reload --port 8002
+
+# Terminal 2 (frontend)
+cd C:\Users\ROHIT\Work\Office\Hex_Proj\Main\vqm_ps\frontend
+npx ng serve --port 4200
+```
 
 ### Run Tests
 
@@ -139,7 +169,30 @@ Then open: http://localhost:8001/docs (Swagger UI)
 uv run pytest                    # Run all tests
 uv run pytest --cov=src          # With coverage
 uv run ruff check .              # Linting
+cd frontend && npx ng build      # Verify frontend compiles
 ```
+
+### Test the Full Portal Flow
+
+1. Start backend: `uv run uvicorn main:app --reload --port 8002`
+2. Start frontend: `cd frontend && npx ng serve --port 4200`
+3. Open http://localhost:4200/login
+4. Login with `admin_user` / `admin123` (or your credentials)
+5. Portal dashboard shows KPIs (open, resolved, total) and query table
+6. Click "+ New Query" → select type → fill details → review → submit
+7. See query ID confirmation (VQ-2026-XXXX) → back to portal → query appears in table
+8. Click query ID → see full query detail
+
+**Note:** No styling — browser defaults only. Auth is real JWT (HMAC-SHA256, not fake).
+
+### Troubleshooting
+
+| Problem | Cause | Fix |
+|---------|-------|-----|
+| Login returns 500 | Wrong server running on that port | Check `curl http://localhost:<port>/health` — response must include `"database":"connected"` |
+| "Submission failed" on new query | CORS preflight blocked | Verify backend has the OPTIONS middleware fix. Restart backend. |
+| Health shows `"database":"disconnected"` | SSH tunnel to bastion not connected | Check SSH key, bastion host, RDS endpoint in .env |
+| Port already in use | Old `vqm` server or zombie process | Use a different port, or find and kill the process |
 
 ---
 
@@ -147,7 +200,7 @@ uv run ruff check .              # Linting
 
 ### Step 1: Login
 
-1. Open http://localhost:8001/docs
+1. Open http://localhost:8002/docs
 2. Expand **POST /auth/login**
 3. Click "Try it out", enter:
    ```json
@@ -189,8 +242,14 @@ See `docs/api_testing_guide.md` for ready-to-use test examples.
 ### Portal Queries
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
+| `/queries` | GET | Bearer + X-Vendor-ID | List all queries for a vendor |
 | `/queries` | POST | Bearer + X-Vendor-ID | Submit a vendor query |
-| `/queries/{query_id}` | GET | Bearer + X-Vendor-ID | Check query status |
+| `/queries/{query_id}` | GET | Bearer + X-Vendor-ID | Get full query detail |
+
+### Portal Dashboard
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/dashboard/kpis` | GET | Bearer + X-Vendor-ID | Vendor KPIs (open, resolved, avg time, total) |
 
 ### Email Dashboard
 | Endpoint | Method | Auth | Purpose |

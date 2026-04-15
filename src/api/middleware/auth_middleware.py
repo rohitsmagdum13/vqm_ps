@@ -37,6 +37,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
         request: Request,
         call_next: RequestResponseEndpoint,
     ) -> Response:
+        # Defense-in-depth: CORS preflight (OPTIONS) never carries an
+        # Authorization header. CORSMiddleware handles OPTIONS before
+        # this middleware (see middleware ordering in main.py), but
+        # this guard protects against accidental reordering.
+        if request.method == "OPTIONS":
+            return await call_next(request)
+
         path = request.url.path
         if _should_skip_auth(path):
             request.state.username = None

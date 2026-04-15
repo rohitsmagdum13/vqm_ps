@@ -27,6 +27,61 @@ logger = structlog.get_logger(__name__)
 router = APIRouter(tags=["queries"])
 
 
+@router.get("/queries")
+@log_api_call
+async def list_queries(
+    request: Request,
+    x_vendor_id: str = Header(
+        ...,
+        description="Vendor ID to filter queries. Example: hexaware",
+        alias="X-Vendor-ID",
+    ),
+) -> dict:
+    """List all queries submitted by a vendor.
+
+    Returns queries from workflow.case_execution ordered by
+    creation date (newest first). Used by the portal dashboard
+    to show the vendor's query history.
+    """
+    postgres = request.app.state.postgres
+    if postgres is None:
+        raise HTTPException(status_code=503, detail="Database unavailable")
+
+    # JOIN case_execution (workflow state) with portal_queries (intake data)
+    # so the frontend gets both status and submission details in one call.
+    # LEFT JOIN because email-path queries won't have portal_queries rows.
+    rows = await postgres.fetch(
+        "SELECT ce.query_id, ce.status, ce.source, ce.processing_path, "
+        "       ce.created_at, ce.updated_at, "
+        "       pq.subject, pq.query_type, pq.priority, "
+        "       pq.reference_number, pq.sla_deadline "
+        "FROM workflow.case_execution ce "
+        "LEFT JOIN intake.portal_queries pq ON ce.query_id = pq.query_id "
+        "WHERE ce.vendor_id = $1 "
+        "ORDER BY ce.created_at DESC",
+        x_vendor_id,
+    )
+
+    queries = [
+        {
+            "query_id": row["query_id"],
+            "subject": row.get("subject"),
+            "query_type": row.get("query_type"),
+            "status": row["status"],
+            "priority": row.get("priority"),
+            "source": row["source"],
+            "processing_path": row.get("processing_path"),
+            "reference_number": row.get("reference_number"),
+            "sla_deadline": str(row["sla_deadline"]) if row.get("sla_deadline") else None,
+            "created_at": str(row["created_at"]),
+            "updated_at": str(row["updated_at"]),
+        }
+        for row in rows
+    ]
+
+    return {"queries": queries}
+
+
 @router.post("/queries", status_code=201)
 @log_api_call
 async def submit_query(
@@ -73,7 +128,11 @@ async def submit_query(
             detail=f"Duplicate query: {exc.message_id}",
         ) from exc
 
-    return {"query_id": payload.query_id, "status": "RECEIVED"}
+    return {
+        "query_id": payload.query_id,
+        "status": "RECEIVED",
+        "created_at": str(payload.received_at),
+    }
 
 
 @router.get("/queries/{query_id}")
@@ -102,11 +161,15 @@ async def get_query_status(
     if postgres is None:
         raise HTTPException(status_code=503, detail="Database unavailable")
 
+    # JOIN to get both workflow state and portal submission details
     row = await postgres.fetchrow(
-        "SELECT query_id, status, source, processing_path, "
-        "       created_at, updated_at "
-        "FROM workflow.case_execution "
-        "WHERE query_id = $1 AND vendor_id = $2",
+        "SELECT ce.query_id, ce.status, ce.source, ce.processing_path, "
+        "       ce.vendor_id, ce.created_at, ce.updated_at, "
+        "       pq.subject, pq.query_type, pq.description, "
+        "       pq.priority, pq.reference_number, pq.sla_deadline "
+        "FROM workflow.case_execution ce "
+        "LEFT JOIN intake.portal_queries pq ON ce.query_id = pq.query_id "
+        "WHERE ce.query_id = $1 AND ce.vendor_id = $2",
         query_id,
         x_vendor_id,
     )
@@ -116,9 +179,16 @@ async def get_query_status(
 
     return {
         "query_id": row["query_id"],
+        "subject": row.get("subject"),
+        "query_type": row.get("query_type"),
+        "description": row.get("description"),
         "status": row["status"],
+        "priority": row.get("priority"),
         "source": row["source"],
         "processing_path": row.get("processing_path"),
+        "reference_number": row.get("reference_number"),
+        "vendor_id": row.get("vendor_id"),
+        "sla_deadline": str(row["sla_deadline"]) if row.get("sla_deadline") else None,
         "created_at": str(row["created_at"]),
         "updated_at": str(row["updated_at"]),
     }
