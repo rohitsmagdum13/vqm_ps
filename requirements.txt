@@ -27,6 +27,7 @@ langchain-community                    # Community integrations (tools, retrieve
 langgraph>=0.2                         # Multi-agent state machine orchestration
 langsmith                              # LLM observability and tracing
 openai                                 # Dev flexibility — .env supports OpenAI as LLM provider
+langgraph-cli[inmem]
 
 # -----------------------------------------------------------
 # Database — PostgreSQL + pgvector

@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-009",
+  "title": "Compliance Requirements and Audit Process for Vendors",
+  "category": "compliance_audit",
+  "query_type": "COMPLIANCE_AUDIT",
+  "content": "Hexaware requires all active vendors to maintain compliance with applicable regulations and internal standards. Compliance areas include: data protection (GDPR, India DPDPA), information security (ISO 27001 certification or equivalent), financial reporting (SOC 2 Type II for cloud service vendors), environmental standards (ISO 14001 for manufacturing vendors), and labor practices (no child labor, fair wage certification). Annual compliance audits are conducted between January and March. Vendors receive an audit notification 30 days in advance with a checklist of required documentation. Required documents typically include: current certifications, insurance certificates (liability minimum INR 5 crore), tax compliance certificates, financial statements (last 2 years), and a completed vendor self-assessment questionnaire. Audit findings are classified as: COMPLIANT (no action needed), MINOR_FINDING (corrective action within 30 days), MAJOR_FINDING (corrective action within 15 days with progress reports), and CRITICAL_FINDING (immediate remediation required, vendor status suspended until resolved). Vendors can submit compliance documents through the portal under Compliance > Document Upload. For questions about specific compliance requirements, contact compliance@hexaware.com or the legal-compliance team. Non-compliance may result in vendor status downgrade, contract suspension, or termination per MSA Section 9.2. Vendors transitioning to new compliance frameworks can request a 90-day grace period with a documented transition plan.",
+  "tags": ["compliance", "audit", "GDPR", "ISO 27001", "SOC 2", "certification"],
+  "last_updated": "2026-02-15",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-009"
+}

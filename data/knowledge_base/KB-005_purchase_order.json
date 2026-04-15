@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-005",
+  "title": "Purchase Order Processing, Status Tracking, and Modifications",
+  "category": "purchase_order",
+  "query_type": "PURCHASE_ORDER",
+  "content": "Purchase Orders (POs) are created by Hexaware's procurement team and sent to vendors via email or the VQMS portal. Each PO has a unique identifier in the format PO-YYYY-NNNNN. PO statuses are: DRAFT (not yet sent), ISSUED (sent to vendor), ACKNOWLEDGED (vendor confirmed receipt), IN_PROGRESS (fulfillment started), PARTIALLY_FULFILLED (some line items shipped), FULFILLED (all items shipped), CLOSED (payment completed), and CANCELLED. Vendors must acknowledge receipt of a PO within 3 business days. Failure to acknowledge may result in automatic cancellation. To modify an existing PO (quantity changes, delivery date adjustments, item substitutions), vendors must submit a PO Change Request through the portal before the PO enters IN_PROGRESS status. Changes to POs already in fulfillment require approval from the procurement manager. PO line items include: item code, description, quantity, unit price, delivery date, and shipping address. Payment terms follow the vendor's contracted terms from the MSA. For PO-related queries, vendors should always reference the PO number. Split shipments are allowed if coordinated with the logistics team — each shipment must reference the original PO number and include a packing list. Overshipment tolerance is 5% by quantity unless the PO specifies exact quantity required.",
+  "tags": ["purchase order", "PO", "procurement", "fulfillment", "acknowledgment"],
+  "last_updated": "2026-03-20",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-005"
+}

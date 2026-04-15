@@ -44,7 +44,7 @@ Analyze the vendor query above and return a JSON object with EXACTLY these field
 
 ```json
 {
-  "intent_classification": "<string: classified intent, e.g. invoice_inquiry, delivery_status, payment_issue, contract_question, technical_support, onboarding, compliance, general_inquiry>",
+  "intent_classification": "<string: one of the query types listed below>",
   "extracted_entities": {
     "invoice_numbers": ["<list of invoice numbers found>"],
     "po_numbers": ["<list of PO numbers found>"],
@@ -56,8 +56,25 @@ Analyze the vendor query above and return a JSON object with EXACTLY these field
   "sentiment": "<one of: POSITIVE, NEUTRAL, NEGATIVE, FRUSTRATED>",
   "confidence_score": <float between 0.0 and 1.0>,
   "multi_issue_detected": <true or false>,
-  "suggested_category": "<string: billing, delivery, contract, technical, general>"
+  "suggested_category": "<string: one of the query types listed below>"
 }
+```
+
+## Official Query Types (use for both intent_classification and suggested_category)
+
+Pick the BEST match from this list:
+- RETURN_REFUND — returns, refunds, RMA requests, credit notes
+- GENERAL_INQUIRY — general questions, account status, portal access
+- CATALOG_PRICING — product catalog, pricing, discounts, rate cards
+- CONTRACT_QUERY — contracts, MSA, amendments, renewals, termination
+- PURCHASE_ORDER — PO status, PO modifications, PO acknowledgment
+- SLA_BREACH_REPORT — SLA violations, missed deadlines, service credits
+- DELIVERY_SHIPMENT — shipping, tracking, logistics, delivery status
+- INVOICE_PAYMENT — invoices, payments, billing, accounts payable
+- COMPLIANCE_AUDIT — compliance, audits, certifications, regulations
+- TECHNICAL_SUPPORT — portal issues, API integration, system errors
+- ONBOARDING — new vendor registration, account setup, documentation
+- QUALITY_ISSUE — defects, quality incidents, corrective actions
 ```
 
 ## Rules

@@ -147,20 +147,31 @@ class SalesforceConnector:
         *,
         correlation_id: str = "",
     ) -> dict | None:
-        """Look up a vendor by Salesforce Vendor_Account__c ID.
+        """Look up a vendor by Salesforce record ID or Vendor_ID__c.
+
+        Accepts EITHER a Salesforce record ID (e.g., 'a0Bal00002Ie1zjAAB')
+        OR a Vendor_ID__c value (e.g., 'V-001'). Detects which type was
+        passed and queries the correct field.
 
         Args:
-            vendor_id: Salesforce Vendor_Account__c record ID.
+            vendor_id: Salesforce record ID or Vendor_ID__c value.
             correlation_id: Tracing ID.
 
         Returns:
             Vendor_Account__c record dict, or None if not found.
         """
         safe_id = vendor_id.replace("'", "\\'")
+
+        # Salesforce record IDs are 15/18 chars (e.g., 'a0Bal00002Ie1zjAAB').
+        # Our custom Vendor_ID__c values start with 'V-' (e.g., 'V-001').
+        # Query the correct field based on the format.
+        is_record_id = self._is_salesforce_record_id(vendor_id)
+        where_field = "Id" if is_record_id else "Vendor_ID__c"
+
         soql = (
             "SELECT Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, "
             "City__c "
-            f"FROM Vendor_Account__c WHERE Id = '{safe_id}' "
+            f"FROM Vendor_Account__c WHERE {where_field} = '{safe_id}' "
             "LIMIT 1"
         )
 

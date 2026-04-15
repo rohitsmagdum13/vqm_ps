@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-008",
+  "title": "Invoice Submission, Payment Processing, and Payment Status",
+  "category": "invoice_payment",
+  "query_type": "INVOICE_PAYMENT",
+  "content": "Vendors must submit invoices through the VQMS portal or via email to ap@hexaware.com. Each invoice must reference a valid PO number, include the vendor's GST/Tax ID, and list all line items with quantities and unit prices matching the PO. Invoice format requirements: PDF format, clearly legible, with invoice number, invoice date, PO number, vendor name, and total amount prominently displayed. Payment terms are determined by the vendor's contract: Net 30 (PLATINUM/GOLD), Net 45 (SILVER), or Net 60 (BRONZE). The payment cycle runs every Monday — invoices approved by Friday 5:00 PM IST are included in the next Monday's payment run. Payment methods available are: NEFT/RTGS (domestic), SWIFT wire transfer (international), and cheque (on request for amounts under INR 50,000). For payment status inquiries, vendors can check the Payment History section in the portal or reference their invoice number when contacting finance-ops. Common invoice rejection reasons: mismatched PO number, quantity exceeds PO, missing tax ID, duplicate invoice number, or goods not yet received. Rejected invoices are returned with a rejection code and vendors have 10 business days to resubmit a corrected invoice. For partial payments or deductions (quality holds, return credits), finance-ops provides a remittance advice with each payment detailing all applied deductions. Early payment discounts (2/10 Net 30) are available for PLATINUM vendors upon request.",
+  "tags": ["invoice", "payment", "billing", "accounts payable", "NEFT", "GST"],
+  "last_updated": "2026-03-22",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-008"
+}

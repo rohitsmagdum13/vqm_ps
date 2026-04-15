@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-002",
+  "title": "General Inquiry Handling and Vendor Communication Guidelines",
+  "category": "general_inquiry",
+  "query_type": "GENERAL_INQUIRY",
+  "content": "General inquiries from vendors cover a broad range of topics that do not fall into a specific operational category. Common general inquiries include questions about Hexaware's office hours (Monday-Friday 9:00 AM to 6:00 PM IST), escalation contacts, vendor portal access, password resets, and account status checks. For vendor portal access issues, vendors should verify their credentials at portal.hexaware.com and use the 'Forgot Password' link. If the issue persists, the vendor-support team can reset credentials within 1 business day. Vendors asking about their account status can check their tier (PLATINUM, GOLD, SILVER, BRONZE) via GET /vendors endpoint or by contacting their account manager. For communication preferences, vendors can update their notification settings through the portal under Profile > Notifications. General inquiries have a standard SLA of 24 hours for BRONZE tier and scale down to 4 hours for PLATINUM tier. If a general inquiry is actually a misclassified operational query (e.g., asking about an invoice inside a general question), the triage team will reclassify it to the appropriate type. Vendors are encouraged to select the most specific query type when submitting through the portal to ensure faster routing.",
+  "tags": ["general", "portal access", "password reset", "account status", "contact"],
+  "last_updated": "2026-03-10",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-002"
+}

@@ -5,7 +5,7 @@
 <div *ngIf="query">
   <p><strong>Query ID:</strong> {{ query.query_id }}</p>
   <p><strong>Subject:</strong> {{ query.subject || '-' }}</p>
-  <p><strong>Type:</strong> {{ query.query_type || '-' }}</p>
+  <p><strong>Type:</strong> {{ queryTypeLabel(query.query_type) }}</p>
   <p><strong>Description:</strong> {{ query.description || '-' }}</p>
   <p><strong>Status:</strong> {{ query.status }}</p>
   <p><strong>Priority:</strong> {{ query.priority || '-' }}</p>

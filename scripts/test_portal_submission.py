@@ -76,7 +76,7 @@ async def run_test() -> None:
 
         # Build a test QuerySubmission
         submission = QuerySubmission(
-            query_type="Invoice",
+            query_type="INVOICE_PAYMENT",
             subject="Test query - Invoice INV-2026-TEST status check",
             description=(
                 "This is a test query submitted via the test_portal_submission.py script. "

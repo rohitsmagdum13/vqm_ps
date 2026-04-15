@@ -1,7 +1,7 @@
 import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
-import { QueryService, QueryDetail } from '../../services/query.service';
+import { QueryService, QueryDetail, queryTypeLabel } from '../../services/query.service';
 
 @Component({
   selector: 'app-query-status',
@@ -12,6 +12,7 @@ import { QueryService, QueryDetail } from '../../services/query.service';
 export class QueryStatusComponent implements OnInit {
   query: QueryDetail | null = null;
   error = '';
+  queryTypeLabel = queryTypeLabel;
 
   constructor(
     private route: ActivatedRoute,

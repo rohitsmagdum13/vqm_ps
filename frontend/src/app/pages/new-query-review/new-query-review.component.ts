@@ -2,7 +2,7 @@ import { Component } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
 import { WizardService } from '../../services/wizard.service';
-import { QueryService, SubmitResponse } from '../../services/query.service';
+import { QueryService, SubmitResponse, queryTypeLabel } from '../../services/query.service';
 
 @Component({
   selector: 'app-new-query-review',
@@ -14,6 +14,7 @@ export class NewQueryReviewComponent {
   error = '';
   submitted = false;
   result: SubmitResponse | null = null;
+  queryTypeLabel = queryTypeLabel;
 
   constructor(
     public wizard: WizardService,

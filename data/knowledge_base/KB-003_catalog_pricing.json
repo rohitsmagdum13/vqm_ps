@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-003",
+  "title": "Product Catalog and Pricing Inquiries",
+  "category": "catalog_pricing",
+  "query_type": "CATALOG_PRICING",
+  "content": "Hexaware maintains a centralized product catalog accessible via the vendor portal at portal.hexaware.com/catalog. The catalog is updated quarterly and includes all active SKUs, unit prices, volume discount tiers, and availability status. Pricing is determined by the vendor's contracted rate card, which is negotiated during onboarding and reviewed annually. Standard discount tiers are: Tier 1 (1-100 units, list price), Tier 2 (101-500 units, 5% discount), Tier 3 (501-1000 units, 10% discount), and Tier 4 (1000+ units, negotiated). For pricing discrepancies between the catalog and a vendor's rate card, vendors should reference their Master Service Agreement (MSA) section 4.2 — Pricing Terms. The contracted rate always takes precedence over catalog list prices. To request a price adjustment or volume discount renegotiation, vendors must submit a written request to procurement@hexaware.com at least 30 days before the next billing cycle. Catalog updates that affect existing POs will be communicated via email 14 days in advance. Historical pricing data is available for the last 12 months via the portal's Pricing History tab. For bulk pricing quotes on new product lines, contact the procurement team directly with the product codes and estimated annual volume.",
+  "tags": ["catalog", "pricing", "discount", "rate card", "SKU", "volume discount"],
+  "last_updated": "2026-02-28",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-003"
+}

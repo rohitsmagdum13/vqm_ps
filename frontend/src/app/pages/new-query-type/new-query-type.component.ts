@@ -13,13 +13,20 @@ import { WizardService } from '../../services/wizard.service';
 export class NewQueryTypeComponent {
   selectedType = '';
 
-  queryTypes = [
-    'Invoice Query',
-    'Payment Status',
-    'Contract Question',
-    'General Inquiry',
-    'Compliance Question',
-    'Technical Support',
+  // Official VQMS query types — must match backend QUERY_TYPES in models/query.py
+  queryTypes: { value: string; label: string }[] = [
+    { value: 'RETURN_REFUND', label: 'Return & Refund' },
+    { value: 'GENERAL_INQUIRY', label: 'General Inquiry' },
+    { value: 'CATALOG_PRICING', label: 'Catalog & Pricing' },
+    { value: 'CONTRACT_QUERY', label: 'Contract Query' },
+    { value: 'PURCHASE_ORDER', label: 'Purchase Order' },
+    { value: 'SLA_BREACH_REPORT', label: 'SLA Breach Report' },
+    { value: 'DELIVERY_SHIPMENT', label: 'Delivery & Shipment' },
+    { value: 'INVOICE_PAYMENT', label: 'Invoice & Payment' },
+    { value: 'COMPLIANCE_AUDIT', label: 'Compliance & Audit' },
+    { value: 'TECHNICAL_SUPPORT', label: 'Technical Support' },
+    { value: 'ONBOARDING', label: 'Onboarding' },
+    { value: 'QUALITY_ISSUE', label: 'Quality Issue' },
   ];
 
   constructor(private wizard: WizardService, private router: Router) {

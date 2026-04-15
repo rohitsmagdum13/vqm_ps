@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-007",
+  "title": "Delivery, Shipment Tracking, and Logistics Queries",
+  "category": "delivery_shipment",
+  "query_type": "DELIVERY_SHIPMENT",
+  "content": "Hexaware coordinates all inbound shipments from vendors through the supply-chain team. Standard delivery terms are FOB Destination unless otherwise specified in the PO. Vendors must provide shipment tracking information within 24 hours of dispatch by updating the PO status in the portal or emailing logistics@hexaware.com with the PO number, carrier name, tracking number, and estimated delivery date. Accepted carriers are: DHL, FedEx, BlueDart, DTDC, and India Post for domestic shipments. International shipments require commercial invoices, packing lists, and customs documentation. Delivery to Hexaware warehouses is accepted Monday through Friday, 8:00 AM to 5:00 PM IST. Dock appointments are required for shipments exceeding 500 kg — schedule via the portal under Shipments > Book Dock Slot. For delayed shipments, vendors must notify the supply-chain team at least 48 hours before the original delivery date. Failure to notify may result in late delivery penalties as specified in the MSA. Partial shipments are accepted if the PO allows split delivery. Each partial shipment must include a Delivery Note referencing the PO number and listing items and quantities shipped. For damaged goods received at our warehouse, Hexaware files a damage report within 48 hours and the vendor is notified to arrange replacement or credit. Proof of delivery (POD) is available through the carrier's tracking portal or by requesting from logistics@hexaware.com.",
+  "tags": ["delivery", "shipment", "tracking", "logistics", "carrier", "dock appointment"],
+  "last_updated": "2026-03-18",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-007"
+}

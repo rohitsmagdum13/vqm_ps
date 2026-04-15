@@ -78,7 +78,7 @@ class TestPostQueries:
                     "We noticed a discrepancy between the invoice "
                     "and purchase order. Please review."
                 ),
-                "query_type": "billing",
+                "query_type": "INVOICE_PAYMENT",
                 "priority": "HIGH",
             },
             headers={
@@ -99,7 +99,7 @@ class TestPostQueries:
             json={
                 "subject": "Test query subject line",
                 "description": "This is a test description for the query.",
-                "query_type": "billing",
+                "query_type": "INVOICE_PAYMENT",
             },
         )
 
@@ -113,7 +113,7 @@ class TestPostQueries:
             json={
                 "subject": "Hi",  # Too short (min 5 chars)
                 "description": "Short",  # Too short (min 10 chars)
-                "query_type": "billing",
+                "query_type": "INVOICE_PAYMENT",
             },
             headers={"X-Vendor-ID": "V-001"},
         )
@@ -131,7 +131,7 @@ class TestPostQueries:
             json={
                 "subject": "Duplicate query subject here",
                 "description": "This is a duplicate query description text.",
-                "query_type": "billing",
+                "query_type": "INVOICE_PAYMENT",
             },
             headers={"X-Vendor-ID": "V-001"},
         )

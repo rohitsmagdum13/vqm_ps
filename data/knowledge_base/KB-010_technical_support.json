@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-010",
+  "title": "Technical Support for Vendor Portal, API Integration, and Systems",
+  "category": "technical_support",
+  "query_type": "TECHNICAL_SUPPORT",
+  "content": "Hexaware provides technical support for vendors experiencing issues with the VQMS portal, API integrations, and connected systems. Common technical issues include: portal login failures (check credentials, clear browser cache, try incognito mode), API authentication errors (verify client_id/client_secret, check token expiration), file upload failures (max file size 10 MB, supported formats: PDF, XLSX, DOCX, CSV, PNG, JPG), and integration connectivity problems. For API integration, Hexaware provides RESTful APIs documented at api.hexaware.com/docs. API rate limits are: 100 requests/minute for standard access, 500 requests/minute for PLATINUM/GOLD vendors. API authentication uses OAuth 2.0 client credentials flow. Common API error codes: 401 (expired or invalid token — refresh your access token), 403 (insufficient permissions — contact your account manager), 429 (rate limit exceeded — implement exponential backoff), 500 (server error — retry after 30 seconds, if persistent contact tech-support). For EDI integration (ANSI X12 or EDIFACT), Hexaware supports AS2 and SFTP transport. EDI mapping specifications are available from the integration team. Browser compatibility: the vendor portal supports Chrome 90+, Firefox 88+, Edge 90+, and Safari 15+. For system outages or scheduled maintenance, check status.hexaware.com. Planned maintenance windows are every Sunday 2:00 AM to 6:00 AM IST. For urgent technical issues affecting production operations, use the priority escalation line: +91-80-XXXX-XXXX (available 24/7).",
+  "tags": ["technical", "API", "integration", "portal", "login", "EDI"],
+  "last_updated": "2026-03-25",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-010"
+}

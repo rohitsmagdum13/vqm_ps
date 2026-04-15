@@ -29,7 +29,7 @@
   <tr *ngFor="let q of queries">
     <td><a [routerLink]="['/query-status', q.query_id]">{{ q.query_id }}</a></td>
     <td>{{ q.subject || '-' }}</td>
-    <td>{{ q.query_type || '-' }}</td>
+    <td>{{ queryTypeLabel(q.query_type) }}</td>
     <td>{{ q.status }}</td>
     <td>{{ q.priority || '-' }}</td>
     <td>{{ q.created_at }}</td>

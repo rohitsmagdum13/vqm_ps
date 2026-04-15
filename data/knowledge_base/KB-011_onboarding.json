@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-011",
+  "title": "Vendor Onboarding Process and Account Setup",
+  "category": "onboarding",
+  "query_type": "ONBOARDING",
+  "content": "The vendor onboarding process at Hexaware follows a structured 5-step workflow. Step 1 — Registration: New vendors register through the vendor portal at portal.hexaware.com/register or receive an invitation link from their Hexaware sponsor. Required registration fields: company name, GST/Tax ID, primary contact name, email, phone, and business category. Step 2 — Documentation: Vendors submit required documents within 10 business days of registration: business registration certificate, tax compliance certificate, bank details for payment setup (cancelled cheque or bank letter), insurance certificates, and signed NDA. Step 3 — Verification: The vendor-management team verifies all submitted documents, runs background checks, and conducts a due diligence review. This takes 5-10 business days. Step 4 — Contract: The legal-compliance team prepares and sends the MSA and any applicable SOWs. Both parties sign electronically via DocuSign. Step 5 — Activation: Once the contract is signed, the vendor account is activated with an initial tier of BRONZE. The vendor receives portal credentials, API keys (if applicable), and a welcome kit with user guides and FAQs. Tier upgrades are reviewed quarterly based on transaction volume, quality metrics, and compliance history. For onboarding status inquiries, vendors can check their application status at portal.hexaware.com/onboarding-status or contact onboarding@hexaware.com. Typical onboarding completion time is 15-20 business days from registration to activation. Expedited onboarding (7-10 business days) is available for vendors sponsored by C-level stakeholders.",
+  "tags": ["onboarding", "registration", "account setup", "verification", "activation"],
+  "last_updated": "2026-03-12",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-011"
+}

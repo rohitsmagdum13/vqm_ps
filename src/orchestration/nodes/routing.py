@@ -14,29 +14,47 @@ from __future__ import annotations
 import structlog
 
 from config.settings import Settings
+from models.query import QUERY_TYPE_TEAM_MAP
 from models.workflow import PipelineState
 from models.ticket import RoutingDecision, SLATarget
 from utils.helpers import TimeHelper
 
 logger = structlog.get_logger(__name__)
 
-# Team assignment by query category
-# Keys are lowercase, matched against suggested_category
+# Team assignment by official query type (primary lookup)
+# Maps the 12 VQMS query types to their handling teams.
+# Imported from models.query so there is a single source of truth.
+
+# Fallback team assignment by suggested_category keyword
+# Used when the LLM returns a free-text category instead of
+# an official query type (e.g., "billing" instead of "INVOICE_PAYMENT").
 CATEGORY_TEAM_MAP: dict[str, str] = {
     "billing": "finance-ops",
     "invoice": "finance-ops",
     "payment": "finance-ops",
+    "return": "finance-ops",
+    "refund": "finance-ops",
     "delivery": "supply-chain",
     "shipping": "supply-chain",
     "logistics": "supply-chain",
+    "shipment": "supply-chain",
     "contract": "legal-compliance",
     "agreement": "legal-compliance",
     "terms": "legal-compliance",
     "legal": "legal-compliance",
+    "compliance": "legal-compliance",
+    "audit": "legal-compliance",
     "technical": "tech-support",
     "integration": "tech-support",
     "api": "tech-support",
     "product": "tech-support",
+    "catalog": "procurement",
+    "pricing": "procurement",
+    "purchase": "procurement",
+    "onboarding": "vendor-management",
+    "quality": "quality-assurance",
+    "defect": "quality-assurance",
+    "sla": "sla-compliance",
 }
 
 DEFAULT_TEAM = "general-support"
@@ -87,7 +105,7 @@ class RoutingNode:
         vendor_context = state.get("vendor_context") or {}
 
         # Extract fields for routing rules
-        suggested_category = analysis_result.get("suggested_category", "general").lower()
+        suggested_category = analysis_result.get("suggested_category", "general")
         urgency_level = analysis_result.get("urgency_level", "MEDIUM")
 
         # Get vendor tier (default to BRONZE if no vendor context)
@@ -96,7 +114,12 @@ class RoutingNode:
         vendor_tier = tier_data.get("tier_name", "BRONZE")
 
         # Rule 1: Team assignment
-        assigned_team = CATEGORY_TEAM_MAP.get(suggested_category, DEFAULT_TEAM)
+        # First try exact match on official query type (e.g., "INVOICE_PAYMENT")
+        # then fall back to keyword match on lowercase category (e.g., "billing")
+        assigned_team = QUERY_TYPE_TEAM_MAP.get(
+            suggested_category.upper(),
+            CATEGORY_TEAM_MAP.get(suggested_category.lower(), DEFAULT_TEAM),
+        )
 
         # Rule 2: SLA calculation
         tier_hours = TIER_SLA_HOURS.get(vendor_tier, self._settings.sla_default_hours)

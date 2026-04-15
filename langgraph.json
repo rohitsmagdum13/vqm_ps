@@ -1,0 +1,7 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "vqms_pipeline": "./src/orchestration/studio.py:graph"
+  },
+  "env": ".env"
+}

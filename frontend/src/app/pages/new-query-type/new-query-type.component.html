@@ -3,7 +3,7 @@
 <div>
   <select [(ngModel)]="selectedType">
     <option value="" disabled>-- Select query type --</option>
-    <option *ngFor="let t of queryTypes" [value]="t">{{ t }}</option>
+    <option *ngFor="let t of queryTypes" [value]="t.value">{{ t.label }}</option>
   </select>
 </div>
 <br>

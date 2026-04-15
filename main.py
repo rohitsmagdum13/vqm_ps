@@ -145,6 +145,36 @@ async def lifespan(application: FastAPI):
         logger.warning("LLM Gateway init failed", tool="llm_gateway")
         application.state.llm_gateway = None
 
+    # --- Create Graph API connector ---
+    graph_api = None
+    try:
+        from adapters.graph_api import GraphAPIConnector
+
+        graph_api = GraphAPIConnector(settings)
+        logger.info("Graph API connector ready", tool="graph_api")
+        application.state.graph_api = graph_api
+    except Exception:
+        logger.warning(
+            "Graph API connector init failed — email endpoints will not work",
+            tool="graph_api",
+        )
+        application.state.graph_api = None
+
+    # --- Create ServiceNow connector ---
+    servicenow = None
+    try:
+        from adapters.servicenow import ServiceNowConnector
+
+        servicenow = ServiceNowConnector(settings)
+        logger.info("ServiceNow connector ready", tool="servicenow")
+        application.state.servicenow = servicenow
+    except Exception:
+        logger.warning(
+            "ServiceNow connector init failed — ticket endpoints will not work",
+            tool="servicenow",
+        )
+        application.state.servicenow = None
+
     # --- Create Portal Intake Service ---
     # Wires together postgres + sqs + eventbridge into the service
     # that handles POST /queries from the vendor portal
@@ -187,6 +217,14 @@ async def lifespan(application: FastAPI):
 
     # --- Shutdown ---
     logger.info("VQMS shutting down")
+
+    if servicenow is not None:
+        await servicenow.close()
+        logger.info("ServiceNow connector closed", tool="servicenow")
+
+    if graph_api is not None:
+        await graph_api.close()
+        logger.info("Graph API connector closed", tool="graph_api")
 
     if postgres is not None:
         await postgres.disconnect()

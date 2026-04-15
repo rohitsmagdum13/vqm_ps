@@ -35,6 +35,30 @@ export interface SubmitResponse {
   created_at: string;
 }
 
+/** Maps backend query type codes to readable labels.
+ *  Must stay in sync with backend QUERY_TYPES in models/query.py. */
+export const QUERY_TYPE_LABELS: Record<string, string> = {
+  RETURN_REFUND: 'Return & Refund',
+  GENERAL_INQUIRY: 'General Inquiry',
+  CATALOG_PRICING: 'Catalog & Pricing',
+  CONTRACT_QUERY: 'Contract Query',
+  PURCHASE_ORDER: 'Purchase Order',
+  SLA_BREACH_REPORT: 'SLA Breach Report',
+  DELIVERY_SHIPMENT: 'Delivery & Shipment',
+  INVOICE_PAYMENT: 'Invoice & Payment',
+  COMPLIANCE_AUDIT: 'Compliance & Audit',
+  TECHNICAL_SUPPORT: 'Technical Support',
+  ONBOARDING: 'Onboarding',
+  QUALITY_ISSUE: 'Quality Issue',
+};
+
+/** Returns the human-readable label for a query type code,
+ *  or the raw code if not found in the map. */
+export function queryTypeLabel(code: string | null | undefined): string {
+  if (!code) return '-';
+  return QUERY_TYPE_LABELS[code] ?? code;
+}
+
 @Injectable({ providedIn: 'root' })
 export class QueryService {
   constructor(private http: HttpClient) {}

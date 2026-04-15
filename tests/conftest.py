@@ -52,6 +52,10 @@ def mock_settings() -> Settings:
         salesforce_username="test@test.com",
         salesforce_password="testpass",
         salesforce_security_token="testtoken",
+        # ServiceNow
+        servicenow_instance_url="https://test.service-now.com",
+        servicenow_username="test-user",
+        servicenow_password="test-pass",
         # PostgreSQL — not connecting in tests, just need valid values
         postgres_host="localhost",
         postgres_port=5432,
@@ -222,7 +226,7 @@ def sample_query_submission() -> dict:
             "$15,000 but PO-2026-1234 was approved for $12,500. "
             "Please review and advise."
         ),
-        "query_type": "billing",
+        "query_type": "INVOICE_PAYMENT",
         "priority": "high",
         "reference_number": "PO-2026-1234",
     }

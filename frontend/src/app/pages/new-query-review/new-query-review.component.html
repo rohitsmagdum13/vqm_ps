@@ -1,7 +1,7 @@
 <h1>New Query — Step 3: Review &amp; Submit</h1>
 
 <div *ngIf="!submitted">
-  <p><strong>Query Type:</strong> {{ wizard.queryType }}</p>
+  <p><strong>Query Type:</strong> {{ queryTypeLabel(wizard.queryType) }}</p>
   <p><strong>Subject:</strong> {{ wizard.subject }}</p>
   <p><strong>Description:</strong> {{ wizard.description }}</p>
   <p><strong>Priority:</strong> {{ wizard.priority }}</p>

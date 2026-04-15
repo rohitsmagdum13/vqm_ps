@@ -2,7 +2,7 @@ import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { AuthService } from '../../services/auth.service';
-import { QueryService, QueryItem, KpiResponse } from '../../services/query.service';
+import { QueryService, QueryItem, KpiResponse, queryTypeLabel } from '../../services/query.service';
 
 @Component({
   selector: 'app-portal',
@@ -40,6 +40,8 @@ export class PortalComponent implements OnInit {
       error: () => (this.error = 'Failed to load queries'),
     });
   }
+
+  queryTypeLabel = queryTypeLabel;
 
   newQuery(): void {
     this.router.navigate(['/new-query-type']);

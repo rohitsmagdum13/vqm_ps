@@ -59,7 +59,7 @@ def valid_submission() -> QuerySubmission:
             "$15,000 but PO-2026-1234 was approved for $12,500. "
             "Please review and advise."
         ),
-        query_type="billing",
+        query_type="INVOICE_PAYMENT",
         priority="HIGH",
         reference_number="PO-2026-1234",
     )
@@ -85,7 +85,7 @@ class TestSubmitQueryHappyPath:
         assert result.body == valid_submission.description
         assert result.priority == "HIGH"
         assert result.thread_status == "NEW"
-        assert result.metadata["query_type"] == "billing"
+        assert result.metadata["query_type"] == "INVOICE_PAYMENT"
         assert result.metadata["reference_number"] == "PO-2026-1234"
 
     async def test_query_id_generated(

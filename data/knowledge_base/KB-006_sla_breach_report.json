@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-006",
+  "title": "SLA Breach Reporting and Escalation Procedures",
+  "category": "sla_breach_report",
+  "query_type": "SLA_BREACH_REPORT",
+  "content": "Service Level Agreements (SLAs) define the expected response and resolution times for vendor queries and operational commitments. SLA tiers are based on vendor classification: PLATINUM (4-hour response, 8-hour resolution), GOLD (8-hour response, 16-hour resolution), SILVER (16-hour response, 24-hour resolution), BRONZE (24-hour response, 48-hour resolution). SLA breach reports should be submitted when a vendor believes Hexaware has not met the committed service levels. To file a breach report, include: the original ticket or query ID, the SLA commitment that was missed, the actual response/resolution time, and any business impact. Breach reports are routed to the SLA compliance team for investigation within 4 hours of receipt. Escalation thresholds are: 70% of SLA elapsed triggers a warning to the assigned team, 85% triggers L1 escalation to the team lead, 95% triggers L2 escalation to the department head. For confirmed SLA breaches, Hexaware offers: service credits (calculated per MSA Section 6.1), root cause analysis within 5 business days, and a corrective action plan. Repeated SLA breaches (3+ in a quarter) trigger a vendor relationship review. Vendors can track SLA performance metrics for their account through the portal under Reports > SLA Dashboard. SLA calculations exclude weekends, public holidays, and any time the query is in PAUSED status waiting for vendor input.",
+  "tags": ["SLA", "breach", "escalation", "service credit", "compliance"],
+  "last_updated": "2026-03-05",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-006"
+}

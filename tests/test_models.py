@@ -60,7 +60,7 @@ def _make_parsed_email(**overrides) -> dict:
 
 def _make_query_submission(**overrides) -> dict:
     data = {
-        "query_type": "Invoice",
+        "query_type": "INVOICE_PAYMENT",
         "subject": "Invoice payment inquiry",
         "description": "I need to check the status of my recent invoice submission.",
     }
@@ -206,6 +206,18 @@ class TestQuerySubmission:
     def test_invalid_priority(self):
         with pytest.raises(ValidationError):
             QuerySubmission(**_make_query_submission(priority="URGENT"))
+
+    def test_invalid_query_type_rejected(self):
+        """Free-text query types are rejected — must be one of the 12 official types."""
+        with pytest.raises(ValidationError):
+            QuerySubmission(**_make_query_submission(query_type="billing"))
+
+    def test_all_query_types_accepted(self):
+        """All 12 official query types should be accepted."""
+        from models.query import QUERY_TYPES
+        for qt in QUERY_TYPES:
+            qs = QuerySubmission(**_make_query_submission(query_type=qt))
+            assert qs.query_type == qt
 
 
 # ===========================

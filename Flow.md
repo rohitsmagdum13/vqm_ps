@@ -2,9 +2,9 @@
 
 _This file traces exactly how a vendor query moves through the codebase. Updated after every phase._
 
-## Current State: Phase 3 — AI Pipeline Core (Complete)
+## Current State: Phase 4 — Response Generation and Delivery (Complete)
 
-Phase 1 (Foundation), Phase 2 (Intake Services), and Phase 3 (AI Pipeline Core) are complete. Both entry points produce messages on SQS. The LangGraph pipeline consumes them, runs query analysis (LLM Call #1), confidence gating, routing, KB search, and path decision. Three processing paths (A, B, C) are wired. LLM Gateway provides Bedrock primary with OpenAI fallback. 239 tests pass.
+Phases 1-4 are complete. Both entry points produce messages on SQS. The LangGraph pipeline consumes them, runs query analysis (LLM Call #1), confidence gating, routing, KB search, path decision, response drafting (LLM Call #2), quality gate validation, ServiceNow ticket creation, and email delivery. All three processing paths (A, B, C) are wired with real nodes (except triage placeholder for Phase 5). 358 tests pass.
 
 ---
 
@@ -158,10 +158,11 @@ All external system interactions go through connectors in `src/connectors/`. Eve
 | SQSConnector | `src/connectors/sqs.py` | send_message, receive_messages, delete_message (orjson serialization) |
 | EventBridgeConnector | `src/connectors/eventbridge.py` | publish_event with 20 valid event types, detail enrichment with correlation_id |
 | GraphAPIConnector | `src/connectors/graph_api.py` | MSAL OAuth2, fetch_email, send_email, list_unread_messages, webhook subscription (httpx + tenacity retry) |
-| SalesforceConnector | `src/connectors/salesforce.py` | 3-step vendor identification, find_vendor_by_email, fuzzy_name_match (simple-salesforce + asyncio.to_thread) |
-| BedrockConnector | `src/connectors/bedrock.py` | LLM inference (Claude Sonnet 3.5 via Messages API) + embeddings (Titan Embed v2, 1536 dims). Retry with tenacity on ThrottlingException/ServiceUnavailableException. Cost tracking per call. |
-| OpenAIConnector | `src/connectors/openai_llm.py` | OpenAI Chat Completions (GPT-4o) + Embeddings (text-embedding-3-small). Retry with tenacity on RateLimitError/APIConnectionError/APITimeoutError. Cost tracking per call. Used as fallback behind LLM Gateway. |
-| LLMGateway | `src/connectors/llm_gateway.py` | Unified LLM gateway. Routes `llm_complete()` and `llm_embed()` to Bedrock (primary) or OpenAI (fallback) based on `llm_provider` setting. Four modes: bedrock_only, openai_only, bedrock_with_openai_fallback, openai_with_bedrock_fallback. Pipeline nodes call the gateway, not individual connectors. |
+| SalesforceConnector | `src/adapters/salesforce.py` | 3-step vendor identification, find_vendor_by_email, fuzzy_name_match (simple-salesforce + asyncio.to_thread) |
+| ServiceNowConnector | `src/adapters/servicenow.py` | httpx.AsyncClient, create_ticket, update_ticket_status, get_ticket, get_work_notes. Lazy client init. Priority mapping CRITICAL→1..LOW→4. |
+| BedrockConnector | `src/adapters/bedrock.py` | LLM inference (Claude Sonnet 3.5 via Messages API) + embeddings (Titan Embed v2, 1536 dims). Retry with tenacity on ThrottlingException/ServiceUnavailableException. Cost tracking per call. |
+| OpenAIConnector | `src/adapters/openai_llm.py` | OpenAI Chat Completions (GPT-4o) + Embeddings (text-embedding-3-small). Retry with tenacity on RateLimitError/APIConnectionError/APITimeoutError. Cost tracking per call. Used as fallback behind LLM Gateway. |
+| LLMGateway | `src/adapters/llm_gateway.py` | Unified LLM gateway. Routes `llm_complete()` and `llm_embed()` to Bedrock (primary) or OpenAI (fallback) based on `llm_provider` setting. Four modes: bedrock_only, openai_only, bedrock_with_openai_fallback, openai_with_bedrock_fallback. Pipeline nodes call the gateway, not individual connectors. |
 
 ---
 
@@ -169,16 +170,16 @@ All external system interactions go through connectors in `src/connectors/`. Eve
 
 ### Overview
 
-File: `src/pipeline/graph.py` -> `build_pipeline_graph()`
+File: `src/orchestration/graph.py` -> `build_pipeline_graph()`
 
-The LangGraph orchestrator wires 6 real nodes + 5 placeholder nodes into a StateGraph. The SQS consumer (`src/pipeline/consumer.py` -> `PipelineConsumer`) pulls messages from both intake queues and feeds them into the graph.
+The LangGraph orchestrator wires 10 real nodes + 1 placeholder (triage) into a StateGraph. The SQS consumer (`src/orchestration/sqs_consumer.py` -> `PipelineConsumer`) pulls messages from both intake queues and feeds them into the graph.
 
 ```
 START → context_loading → query_analysis → confidence_check
-    ─(processing_path=="C")─→ triage [STUB] → END
+    ─(processing_path=="C")─→ triage [STUB — Phase 5] → END
     ─(else)─→ routing → kb_search → path_decision
-        ─(processing_path=="A")─→ resolution [STUB] → quality_gate [STUB] → delivery [STUB] → END
-        ─(processing_path=="B")─→ acknowledgment [STUB] → quality_gate [STUB] → delivery [STUB] → END
+        ─(processing_path=="A")─→ resolution → quality_gate → delivery → END
+        ─(processing_path=="B")─→ acknowledgment → quality_gate → delivery → END
 ```
 
 ### Step 7: Context Loading
@@ -278,11 +279,106 @@ File: `src/pipeline/consumer.py` -> `PipelineConsumer`
 - `consume_both_queues()` — `asyncio.gather` two consumers (email + query intake queues)
 - On failure, message stays in queue for SQS retry (up to 3 times, then DLQ)
 
+### Step 10A: Resolution — Path A (LLM Call #2)
+
+File: `src/orchestration/nodes/resolution.py` -> `ResolutionNode.execute(state)`
+
+**Input:** PipelineState with processing_path="A", vendor_context, analysis_result, kb_search_result, routing_decision
+**Output:** `{draft_response: dict, status: "VALIDATING"}` or `{draft_response: None, status: "DRAFT_FAILED"}`
+
+1. Extract vendor name, tier, KB articles, analysis entities, and routing SLA from state
+2. Format KB articles for prompt (article_id, content_snippet, similarity_score)
+3. Render `resolution_v1.j2` via PromptManager — includes vendor name, tier SLA statement, KB articles, entities, "PENDING" ticket placeholder
+4. LLM Call #2: `llm_gateway.llm_complete(prompt, system_prompt, temperature=0.3)` — higher temperature than analysis for more natural email style
+5. Parse JSON from response (3 strategies: direct parse, markdown fences, brace extraction)
+6. Build DraftResponse: `draft_type="RESOLUTION"`, subject, body_html, confidence, sources (KB article IDs)
+7. On LLM failure or parse failure → status="DRAFT_FAILED", draft_response=None
+
+SLA statements by tier: PLATINUM (2-hour priority), GOLD (4-hour priority), SILVER (8-hour priority), BRONZE (24-hour standard).
+
+### Step 10B: Acknowledgment — Path B (LLM Call #2)
+
+File: `src/orchestration/nodes/acknowledgment.py` -> `AcknowledgmentNode.execute(state)`
+
+**Input:** PipelineState with processing_path="B", vendor_context, analysis_result, routing_decision
+**Output:** `{draft_response: dict, status: "VALIDATING"}` or `{draft_response: None, status: "DRAFT_FAILED"}`
+
+1. Extract vendor name, tier, analysis intent, and assigned_team from state
+2. Render `acknowledgment_v1.j2` via PromptManager — includes vendor name, tier SLA statement, assigned_team, "PENDING" ticket placeholder
+3. LLM Call #2: `llm_gateway.llm_complete(prompt, system_prompt, temperature=0.3)`
+4. Parse JSON from response (same 3 strategies as Resolution)
+5. Build DraftResponse: `draft_type="ACKNOWLEDGMENT"`, subject, body_html, confidence, `sources=[]` (always empty — no KB facts used)
+6. On failure → status="DRAFT_FAILED", draft_response=None
+
+**Key difference from Resolution:** Acknowledgment NEVER contains an answer. It confirms receipt, gives the ticket number, states the SLA, and says the team is investigating.
+
+### Step 11: Quality Gate (7 Deterministic Checks)
+
+File: `src/orchestration/nodes/quality_gate.py` -> `QualityGateNode.execute(state)`
+
+**Input:** PipelineState with draft_response and processing_path
+**Output:** `{quality_gate_result: dict, status: "DELIVERING" | "DRAFT_REJECTED"}`
+
+7 checks run on every outbound draft:
+
+| # | Check | What it validates | Failure condition |
+|---|-------|------------------|-------------------|
+| 1 | Ticket number | "PENDING" or INC-XXXXXXX present in body | No ticket reference found |
+| 2 | SLA wording | SLA-related keywords in body (prioritizing, service agreement, etc.) | No SLA language |
+| 3 | Required sections | Greeting (Dear/Hello/Hi), next steps (next step/will/follow up), closing (regards/sincerely/thank you) | Missing any section |
+| 4 | Restricted terms | 14 blocked terms: "internal only", "jira", "slack channel", "confluence", "do not share", "confidential internal", "meeting notes", "standup", "sprint", "backlog", "pagerduty", "grafana", "terraform", "kubectl" | Any restricted term found |
+| 5 | Word count | 50-500 words | Below 50 or above 500 |
+| 6 | Source citations | Non-empty sources list (Path A RESOLUTION only; skipped for Path B) | Path A with empty sources |
+| 7 | PII scan | SSN pattern (XXX-XX-XXXX) and credit card (16 consecutive digits) | PII pattern detected |
+
+Returns `QualityGateResult`: `{passed: bool, checks_run: 7, checks_passed: int, failed_checks: [str]}`.
+- All pass → status="DELIVERING"
+- Any fail → status="DRAFT_REJECTED" (orchestrator decides whether to re-draft or route to human review)
+
+### Step 12: Delivery (ServiceNow Ticket + Graph API Email)
+
+File: `src/orchestration/nodes/delivery.py` -> `DeliveryNode.execute(state)`
+
+**Input:** PipelineState with draft_response, routing_decision, unified_payload, vendor_context, analysis_result
+**Output:** `{ticket_info: dict | None, status: "RESOLVED" | "AWAITING_RESOLUTION" | "DELIVERY_FAILED"}`
+
+3-phase execution:
+
+| Phase | What it does | On failure |
+|-------|-------------|------------|
+| 1. Create ticket | `servicenow.create_ticket(TicketCreateRequest)` → INC-XXXXXXX | status="DELIVERY_FAILED", ticket_info=None, email NOT sent |
+| 2. Replace placeholder | String replace "PENDING" → INC-XXXXXXX in subject and body_html | N/A (pure string operation) |
+| 3. Send email | `graph_api.send_email(to, subject, body_html, reply_to_message_id)` | status="DELIVERY_FAILED", ticket_info still returned |
+
+Path-specific behavior:
+- **Path A (RESOLUTION):** Final status = "RESOLVED" — ticket is for monitoring only, vendor got the answer
+- **Path B (ACKNOWLEDGMENT):** Final status = "AWAITING_RESOLUTION" — ticket is for investigation, human team must act
+
+Edge cases:
+- No sender_email (portal submissions) → email send skipped, ticket still created, success status returned
+- Email source → `reply_to_message_id` from unified_payload passed to Graph API for thread continuation
+
+### ServiceNow Connector
+
+File: `src/adapters/servicenow.py` -> `ServiceNowConnector`
+
+httpx.AsyncClient with basic auth. Lazy client initialization via `_get_client()`.
+
+| Method | What it does |
+|--------|-------------|
+| `create_ticket(request)` | POST /api/now/table/incident → returns TicketInfo with INC number |
+| `update_ticket_status(ticket_id, new_status)` | Find sys_id by number, PATCH /api/now/table/incident/{sys_id} |
+| `get_ticket(ticket_id)` | Find sys_id by number, GET /api/now/table/incident/{sys_id} |
+| `get_work_notes(ticket_id)` | GET /api/now/table/sys_journal_field?element=work_notes&element_id={sys_id} |
+| `close()` | Close httpx client |
+
+Priority mapping: CRITICAL→1, HIGH→2, MEDIUM→3, LOW→4.
+
 ### Dependency Injection
 
-File: `src/pipeline/dependencies.py` -> `create_pipeline(settings, postgres, llm_gateway, salesforce, sqs)`
+File: `src/orchestration/dependencies.py` -> `create_pipeline(settings, postgres, llm_gateway, salesforce, sqs, servicenow, graph_api)`
 
-Instantiates all 6 pipeline nodes (injecting `LLMGateway` into query_analysis and kb_search), builds the graph via `build_pipeline_graph()`, creates the consumer. Returns `(compiled_graph, pipeline_consumer)`. Called from `main.py` lifespan.
+Instantiates all 10 pipeline nodes (injecting LLMGateway into query_analysis, kb_search, resolution, acknowledgment; ServiceNow + Graph API into delivery), builds the graph via `build_pipeline_graph()`, creates the consumer. Returns `(compiled_graph, pipeline_consumer)`. Called from `main.py` lifespan.
 
 ---
 
@@ -292,15 +388,16 @@ File: `main.py` (project root) -> `lifespan(app)`
 
 1. Load settings from `.env`
 2. Create and connect PostgresConnector (SSH tunnel + asyncpg pool)
-3. Create S3Connector, SQSConnector, EventBridgeConnector
-4. Create GraphAPIConnector, SalesforceConnector (lazy init — no connection at startup)
-5. Build EmailIntakeService with all connectors
-6. Build PortalIntakeService with postgres + sqs + eventbridge
-7. Build EmailDashboardService with postgres + s3 + settings (read-only)
-8. Create LLMGateway (wraps BedrockConnector primary + OpenAIConnector fallback based on `llm_provider` setting)
-9. Build AI pipeline via `create_pipeline()` → compiled graph + consumer (receives LLMGateway, not raw Bedrock)
-10. Store everything on `app.state`
-11. On shutdown: close Graph API httpx client, disconnect PostgreSQL
+3. Initialize AuthService with PostgresConnector
+4. Create SalesforceConnector (lazy init — no connection at startup)
+5. Create S3Connector, SQSConnector, EventBridgeConnector
+6. Create LLMGateway (wraps BedrockConnector primary + OpenAIConnector fallback)
+7. Create GraphAPIConnector (httpx + MSAL, lazy init)
+8. Create ServiceNowConnector (httpx + basic auth, lazy client init)
+9. Build PortalIntakeService with postgres + sqs + eventbridge
+10. Build EmailDashboardService with postgres + s3 + settings (read-only)
+11. Store everything on `app.state`
+12. On shutdown: close ServiceNow httpx client, close Graph API httpx client, disconnect PostgreSQL
 
 ---
 
@@ -397,11 +494,9 @@ File: `src/api/routes/vendors.py` -> `update_vendor()`
 
 ## What is not built yet
 
-- Resolution Agent — LLM Call #2 Path A: full answer from KB (Phase 4)
-- Acknowledgment Agent — LLM Call #2 Path B: acknowledgment only (Phase 4)
-- Quality Gate — 7-check validation on outbound drafts (Phase 4)
-- Delivery — ServiceNow ticket creation + Graph API email send (Phase 4)
 - Path C — Human review triage portal + workflow pause/resume (Phase 5)
 - SLA monitoring and closure/reopen logic (Phase 6)
-- Angular frontend portal (Phase 7)
+- Angular frontend portal — triage portal, admin dashboard (Phase 7)
+- Path B resolution from team's work notes (Step 15 — Phase 6)
+- PII detection via Amazon Comprehend (Quality Gate stub exists, Phase 8)
 - Integration testing and hardening (Phase 8)

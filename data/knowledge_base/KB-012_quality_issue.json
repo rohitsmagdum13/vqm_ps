@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-012",
+  "title": "Quality Issue Reporting and Resolution Process",
+  "category": "quality_issue",
+  "query_type": "QUALITY_ISSUE",
+  "content": "When Hexaware identifies quality issues with goods or services received from a vendor, a Quality Incident Report (QIR) is created. Vendors may also proactively report quality issues they discover before or after shipment. Quality issues are classified by severity: CRITICAL (product safety risk, regulatory non-compliance, or production line stoppage — requires response within 4 hours), MAJOR (significant defect affecting functionality or customer satisfaction — response within 24 hours), MINOR (cosmetic defects or documentation errors — response within 48 hours), and OBSERVATION (potential improvement areas — informational, no deadline). To report a quality issue, vendors should submit a QIR through the VQMS portal under Quality > Report Issue, including: PO number, affected item codes, batch/lot numbers, quantity affected, defect description with photos if applicable, and proposed corrective action. The quality-assurance team reviews all QIRs and may request additional information or samples. For CRITICAL and MAJOR issues, a root cause analysis (RCA) using the 8D methodology is required within 10 business days. The 8D report must include: problem description, containment actions, root cause identification, corrective actions, preventive actions, and verification of effectiveness. Quality metrics affect vendor tier reviews — vendors with more than 2% defect rate in a quarter may face tier downgrade. Quality holds on payments are released once the corrective action is verified and accepted. For recurring quality issues (3+ QIRs on the same item in 6 months), a supplier development program is initiated with the vendor to address systemic issues.",
+  "tags": ["quality", "defect", "QIR", "8D", "root cause", "corrective action"],
+  "last_updated": "2026-03-08",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-012"
+}

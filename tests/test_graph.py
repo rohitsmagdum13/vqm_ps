@@ -102,6 +102,27 @@ class TestPathA:
             "updated_at": now,
         })
 
+        resolution_node = _make_mock_node({
+            "draft_response": {"draft_type": "RESOLUTION", "subject": "Re: Test", "body": "test", "confidence": 0.9, "sources": ["KB-001"]},
+            "status": "VALIDATING",
+            "updated_at": now,
+        })
+        acknowledgment_node = _make_mock_node({
+            "draft_response": {"draft_type": "ACKNOWLEDGMENT", "subject": "Re: Test", "body": "test", "confidence": 0.9, "sources": []},
+            "status": "VALIDATING",
+            "updated_at": now,
+        })
+        quality_gate_node = _make_mock_node({
+            "quality_gate_result": {"passed": True, "checks_run": 7, "checks_passed": 7, "failed_checks": []},
+            "status": "DELIVERING",
+            "updated_at": now,
+        })
+        delivery_node = _make_mock_node({
+            "ticket_info": {"ticket_id": "INC-0000001"},
+            "status": "RESOLVED",
+            "updated_at": now,
+        })
+
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
@@ -109,6 +130,10 @@ class TestPathA:
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
+            resolution_node=resolution_node,
+            acknowledgment_node=acknowledgment_node,
+            quality_gate_node=quality_gate_node,
+            delivery_node=delivery_node,
         )
 
         result = await compiled.ainvoke(_base_state())
@@ -124,6 +149,9 @@ class TestPathA:
         routing_node.execute.assert_called_once()
         kb_node.execute.assert_called_once()
         path_node.execute.assert_called_once()
+        resolution_node.execute.assert_called_once()
+        quality_gate_node.execute.assert_called_once()
+        delivery_node.execute.assert_called_once()
 
 
 class TestPathB:
@@ -184,6 +212,23 @@ class TestPathB:
             "updated_at": now,
         })
 
+        resolution_node = _make_mock_node({"updated_at": now})
+        acknowledgment_node = _make_mock_node({
+            "draft_response": {"draft_type": "ACKNOWLEDGMENT", "subject": "Re: Test", "body": "test", "confidence": 0.9, "sources": []},
+            "status": "VALIDATING",
+            "updated_at": now,
+        })
+        quality_gate_node = _make_mock_node({
+            "quality_gate_result": {"passed": True, "checks_run": 7, "checks_passed": 7, "failed_checks": []},
+            "status": "DELIVERING",
+            "updated_at": now,
+        })
+        delivery_node = _make_mock_node({
+            "ticket_info": {"ticket_id": "INC-0000001"},
+            "status": "RESOLVED",
+            "updated_at": now,
+        })
+
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
@@ -191,6 +236,10 @@ class TestPathB:
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
+            resolution_node=resolution_node,
+            acknowledgment_node=acknowledgment_node,
+            quality_gate_node=quality_gate_node,
+            delivery_node=delivery_node,
         )
 
         result = await compiled.ainvoke(_base_state())
@@ -199,6 +248,8 @@ class TestPathB:
         assert result["status"] == "RESOLVED"
         routing_node.execute.assert_called_once()
         kb_node.execute.assert_called_once()
+        acknowledgment_node.execute.assert_called_once()
+        delivery_node.execute.assert_called_once()
 
 
 class TestPathC:
@@ -241,6 +292,11 @@ class TestPathC:
         kb_node = _make_mock_node({})
         path_node = _make_mock_node({})
 
+        resolution_node = _make_mock_node({})
+        acknowledgment_node = _make_mock_node({})
+        quality_gate_node = _make_mock_node({})
+        delivery_node = _make_mock_node({})
+
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
@@ -248,6 +304,10 @@ class TestPathC:
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
+            resolution_node=resolution_node,
+            acknowledgment_node=acknowledgment_node,
+            quality_gate_node=quality_gate_node,
+            delivery_node=delivery_node,
         )
 
         result = await compiled.ainvoke(_base_state())
@@ -255,10 +315,12 @@ class TestPathC:
         assert result["processing_path"] == "C"
         assert result["status"] == "PAUSED"
 
-        # Routing and KB search should NOT have been called
+        # Routing, KB search, and Phase 4 nodes should NOT have been called
         routing_node.execute.assert_not_called()
         kb_node.execute.assert_not_called()
         path_node.execute.assert_not_called()
+        resolution_node.execute.assert_not_called()
+        delivery_node.execute.assert_not_called()
 
 
 class TestGraphStructure:
@@ -275,6 +337,10 @@ class TestGraphStructure:
             routing_node=mock_node,
             kb_search_node=mock_node,
             path_decision_node=mock_node,
+            resolution_node=mock_node,
+            acknowledgment_node=mock_node,
+            quality_gate_node=mock_node,
+            delivery_node=mock_node,
         )
         # compiled graph should have an ainvoke method
         assert hasattr(compiled, "ainvoke")

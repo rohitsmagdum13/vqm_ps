@@ -9,7 +9,7 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 
 ## Current State
 
-**Phase 3: AI Pipeline Core** — complete.
+**Phase 4: Response Generation and Delivery** — complete.
 
 ### What Works Right Now
 
@@ -42,6 +42,10 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 - Routing (deterministic rules: team assignment, SLA target)
 - KB search (Titan Embed v2 embeddings, pgvector cosine similarity)
 - Path decision (KB match >= 80% = Path A, otherwise Path B)
+- Resolution drafting — Path A (LLM Call #2: full answer from KB articles)
+- Acknowledgment drafting — Path B (LLM Call #2: receipt confirmation only)
+- Quality Gate (7 deterministic checks: ticket format, SLA wording, required sections, restricted terms, word count, source citations, PII scan)
+- Delivery (ServiceNow ticket creation + Graph API email send)
 - SQS consumer pulls from both intake queues and feeds the graph
 
 **Vendor Management (Salesforce Vendor_Account__c):**
@@ -57,6 +61,8 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 - AWS EventBridge (event publishing)
 - Amazon Bedrock (Claude Sonnet 3.5 + Titan Embed v2)
 - OpenAI fallback (GPT-4o + text-embedding-3-small)
+- ServiceNow ITSM (ticket creation + status updates via httpx)
+- Microsoft Graph API (email fetch + send via httpx + MSAL)
 - Structured logging (structlog, IST timestamps, correlation IDs)
 
 ---
@@ -350,7 +356,7 @@ Every vendor query follows one of three paths:
 | 1 | Done | Foundation: models, DB schema, connectors, config |
 | 2 | Done | Intake: email ingestion + portal submission |
 | 3 | Done | AI Pipeline: LangGraph, query analysis, routing, KB search |
-| 4 | Planned | Response generation: resolution, acknowledgment, quality gate, delivery |
+| 4 | Done | Response generation: resolution, acknowledgment, quality gate, delivery |
 | 5 | Planned | Human review: Path C triage workflow |
 | 6 | Planned | SLA monitoring and closure logic |
 | 7 | Planned | Frontend: Angular vendor portal + triage portal |

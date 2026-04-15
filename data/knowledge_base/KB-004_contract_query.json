@@ -1,0 +1,10 @@
+{
+  "article_id": "KB-004",
+  "title": "Contract Terms, Amendments, and Renewal Process",
+  "category": "contract_query",
+  "query_type": "CONTRACT_QUERY",
+  "content": "All vendor contracts are governed by the Master Service Agreement (MSA) signed during onboarding. The MSA covers: payment terms (Net 30/45/60 depending on tier), liability clauses, intellectual property rights, confidentiality, data protection (GDPR/DPDPA compliance), and termination conditions. Contract amendments require mutual written consent and must be processed through the legal-compliance team. To request an amendment, vendors should submit the proposed changes via the VQMS portal under Contracts > Request Amendment, or email legal@hexaware.com with the contract reference number. Amendment processing typically takes 10-15 business days. For contract renewals, Hexaware sends a renewal notice 90 days before expiration. Vendors must respond within 30 days to confirm renewal terms. If no response is received, the contract auto-renews under existing terms for a 12-month period. Early termination requires 60 days written notice and may incur termination fees as specified in MSA Section 8.3. Vendors can view their current contract status, expiration dates, and amendment history through the portal. For disputes regarding contract interpretation, the first step is mediation through the vendor relationship manager before escalating to legal.",
+  "tags": ["contract", "MSA", "amendment", "renewal", "termination", "legal"],
+  "last_updated": "2026-03-01",
+  "source_url": "https://knowledge.hexaware.internal/articles/KB-004"
+}

@@ -105,7 +105,8 @@ class KBSearchNode:
             embedding_str = "[" + ",".join(str(v) for v in embedding) + "]"
 
             rows = await self._postgres.fetch(
-                "SELECT article_id, title, content_snippet, category, source_url, "
+                "SELECT article_id, title, content_text AS content_snippet, "
+                "category, source_url, "
                 "1 - (embedding <=> $1::vector) AS similarity_score "
                 "FROM memory.embedding_index "
                 "ORDER BY embedding <=> $1::vector "

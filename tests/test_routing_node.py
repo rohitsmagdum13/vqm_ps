@@ -74,6 +74,53 @@ class TestTeamAssignment:
         result = await routing_node.execute(_make_state(category="something_random"))
         assert result["routing_decision"]["assigned_team"] == "general-support"
 
+    # Official query type routing (primary lookup path)
+
+    @pytest.mark.asyncio
+    async def test_invoice_payment_type_routes_to_finance(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="INVOICE_PAYMENT"))
+        assert result["routing_decision"]["assigned_team"] == "finance-ops"
+
+    @pytest.mark.asyncio
+    async def test_delivery_shipment_type_routes_to_supply_chain(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="DELIVERY_SHIPMENT"))
+        assert result["routing_decision"]["assigned_team"] == "supply-chain"
+
+    @pytest.mark.asyncio
+    async def test_contract_query_type_routes_to_legal(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="CONTRACT_QUERY"))
+        assert result["routing_decision"]["assigned_team"] == "legal-compliance"
+
+    @pytest.mark.asyncio
+    async def test_technical_support_type_routes_to_tech(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="TECHNICAL_SUPPORT"))
+        assert result["routing_decision"]["assigned_team"] == "tech-support"
+
+    @pytest.mark.asyncio
+    async def test_quality_issue_type_routes_to_qa(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="QUALITY_ISSUE"))
+        assert result["routing_decision"]["assigned_team"] == "quality-assurance"
+
+    @pytest.mark.asyncio
+    async def test_onboarding_type_routes_to_vendor_mgmt(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="ONBOARDING"))
+        assert result["routing_decision"]["assigned_team"] == "vendor-management"
+
+    @pytest.mark.asyncio
+    async def test_sla_breach_type_routes_to_sla_compliance(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="SLA_BREACH_REPORT"))
+        assert result["routing_decision"]["assigned_team"] == "sla-compliance"
+
+    @pytest.mark.asyncio
+    async def test_catalog_pricing_type_routes_to_procurement(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="CATALOG_PRICING"))
+        assert result["routing_decision"]["assigned_team"] == "procurement"
+
+    @pytest.mark.asyncio
+    async def test_general_inquiry_type_routes_to_general(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(category="GENERAL_INQUIRY"))
+        assert result["routing_decision"]["assigned_team"] == "general-support"
+
 
 class TestSLACalculation:
     """Tests for SLA calculation by tier + urgency."""

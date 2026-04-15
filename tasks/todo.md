@@ -187,4 +187,37 @@
 - [x] Step 15: Update documentation (CLAUDE.md, Flow.md, README.md, tasks/todo.md)
 - [x] Verification: 273 tests pass, ruff clean
 
-## Next: Phase 4 — Response Generation and Delivery (Steps 10-12)
+## Phase 4: Response Generation and Delivery (Steps 10-12) — COMPLETE
+
+### Step 1: ServiceNow Connector (httpx)
+- [x] Build src/adapters/servicenow.py (create_ticket, update_status, get_ticket, get_work_notes)
+- [x] Write tests/test_servicenow.py (21 tests — create, update, get, work notes, helpers, lazy init)
+
+### Step 2: Resolution Node — Path A
+- [x] Build src/orchestration/nodes/resolution.py (LLM Call #2 — full answer from KB)
+- [x] Write tests/test_resolution.py (14 tests — draft, LLM failure, JSON parsing, edge cases)
+
+### Step 3: Acknowledgment Node — Path B
+- [x] Build src/orchestration/nodes/acknowledgment.py (acknowledgment-only email)
+- [x] Write tests/test_acknowledgment.py (12 tests — draft, LLM failure, edge cases)
+
+### Step 4: Quality Gate Node
+- [x] Build src/orchestration/nodes/quality_gate.py (7 checks)
+- [x] Write tests/test_quality_gate.py (18 tests — all 7 checks individually, pass/fail scenarios)
+
+### Step 5: Delivery Node
+- [x] Build src/orchestration/nodes/delivery.py (ServiceNow ticket + Graph API email)
+- [x] Write tests/test_delivery.py (11 tests — success, ticket failure, email failure, edge cases)
+
+### Step 6: Wire Phase 4 into Graph
+- [x] Update graph.py to replace 4 placeholders with real nodes (kept triage for Phase 5)
+- [x] Update dependencies.py to inject ServiceNow + Graph API + Phase 4 nodes
+- [x] Update main.py with ServiceNow + Graph API connector init/shutdown
+- [x] Update tests/test_graph.py (4 tests updated with new mock node params)
+
+### Step 7: Gate Check
+- [x] uv run ruff check . — clean
+- [x] uv run pytest — 358 pass (76 new), 3 pre-existing failures
+- [x] Update Flow.md with Steps 10A, 10B, 11, 12, ServiceNow connector
+- [x] Update README.md with Phase 4 status
+- [x] Update tasks/todo.md

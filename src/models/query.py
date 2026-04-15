@@ -5,6 +5,9 @@ Pydantic models for portal query submission and the unified query payload.
 QuerySubmission is the input from the vendor portal wizard.
 UnifiedQueryPayload is the normalized format that both email
 and portal paths produce before entering the AI pipeline.
+
+QUERY_TYPES defines the 12 official query categories used across
+the entire VQMS system (portal, routing, KB search, analytics).
 """
 
 from __future__ import annotations
@@ -17,6 +20,55 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from models.email import EmailAttachment
 
 
+# Official VQMS query types — used by portal frontend, backend validation,
+# routing engine, KB search, and analytics. Add new types here only.
+QUERY_TYPES: dict[str, str] = {
+    "RETURN_REFUND": "Return & Refund",
+    "GENERAL_INQUIRY": "General Inquiry",
+    "CATALOG_PRICING": "Catalog & Pricing",
+    "CONTRACT_QUERY": "Contract Query",
+    "PURCHASE_ORDER": "Purchase Order",
+    "SLA_BREACH_REPORT": "SLA Breach Report",
+    "DELIVERY_SHIPMENT": "Delivery & Shipment",
+    "INVOICE_PAYMENT": "Invoice & Payment",
+    "COMPLIANCE_AUDIT": "Compliance & Audit",
+    "TECHNICAL_SUPPORT": "Technical Support",
+    "ONBOARDING": "Onboarding",
+    "QUALITY_ISSUE": "Quality Issue",
+}
+
+# Which team handles each query type (used by routing node)
+QUERY_TYPE_TEAM_MAP: dict[str, str] = {
+    "RETURN_REFUND": "finance-ops",
+    "GENERAL_INQUIRY": "general-support",
+    "CATALOG_PRICING": "procurement",
+    "CONTRACT_QUERY": "legal-compliance",
+    "PURCHASE_ORDER": "procurement",
+    "SLA_BREACH_REPORT": "sla-compliance",
+    "DELIVERY_SHIPMENT": "supply-chain",
+    "INVOICE_PAYMENT": "finance-ops",
+    "COMPLIANCE_AUDIT": "legal-compliance",
+    "TECHNICAL_SUPPORT": "tech-support",
+    "ONBOARDING": "vendor-management",
+    "QUALITY_ISSUE": "quality-assurance",
+}
+
+QueryType = Literal[
+    "RETURN_REFUND",
+    "GENERAL_INQUIRY",
+    "CATALOG_PRICING",
+    "CONTRACT_QUERY",
+    "PURCHASE_ORDER",
+    "SLA_BREACH_REPORT",
+    "DELIVERY_SHIPMENT",
+    "INVOICE_PAYMENT",
+    "COMPLIANCE_AUDIT",
+    "TECHNICAL_SUPPORT",
+    "ONBOARDING",
+    "QUALITY_ISSUE",
+]
+
+
 class QuerySubmission(BaseModel):
     """Vendor query submitted via the VQMS portal wizard.
 
@@ -27,7 +79,7 @@ class QuerySubmission(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    query_type: str = Field(description="Category of the query (e.g., Invoice, Delivery, Contract)")
+    query_type: QueryType = Field(description="One of the 12 official VQMS query types")
     subject: str = Field(description="Short summary of the query (5-500 chars)")
     description: str = Field(description="Full query details (10-5000 chars)")
     priority: Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"] = Field(
