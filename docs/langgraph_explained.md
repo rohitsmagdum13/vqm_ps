@@ -294,7 +294,7 @@ A vendor named Rajesh from TechNova Inc sends an email:
 ### STEP 0: Message enters the system
 
 ```
-  src/services/email_intake.py (or portal_intake.py)
+  src/services/email_intake/ (or portal_submission.py)
         |
         | Parses the email, identifies the vendor,
         | stores raw email in S3, writes to PostgreSQL,
@@ -753,31 +753,30 @@ your question, our team is looking into it' (Path B)."
 
 ---
 
-### STEPS 7-9: Resolution/Acknowledgment, Quality Gate, Delivery
+### STEPS 10-12: Resolution/Acknowledgment, Quality Gate, Delivery
 
-*(These are currently PLACEHOLDER stubs -- Phase 4 implementation pending)*
+*(Fully implemented in Phase 4)*
 
 ```
-  File: src/orchestration/graph.py (lines 41-100)
+  File: src/orchestration/graph.py
 
   +-------- PATH A (our example) --------+-------- PATH B -----------------+
   |                                       |                                |
-  |  resolution_placeholder(state)        |  acknowledgment_placeholder()  |
-  |  "TODO: LLM Call #2 -- draft a       |  "TODO: Draft an email that    |
-  |   full answer using KB articles"      |   says 'we received your query,|
+  |  ResolutionNode.execute(state)        |  AcknowledgmentNode.execute()  |
+  |  LLM Call #2 -- drafts a full        |  Drafts an email that says     |
+  |  answer using KB articles as source   |  "we received your query,      |
   |                                       |   ticket is INC-XXXXXXX,       |
-  |  Will be:                             |   team is reviewing'"          |
-  |  src/pipeline/nodes/resolution.py     |                                |
-  |                                       |  Will be:                      |
-  +-------------------+-------------------+  src/pipeline/nodes/            |
-                      |                      acknowledgment.py             |
+  |  src/orchestration/nodes/             |   team is reviewing"           |
+  |    resolution.py                      |                                |
+  |                                       |  src/orchestration/nodes/      |
+  +-------------------+-------------------+    acknowledgment.py           |
                       |                      +--------------+---------------+
                       |                                     |
                       +----------------+--------------------+
                                        |
                                        v
-                         quality_gate_placeholder(state)
-                         "TODO: Run 7 checks on the draft"
+                         QualityGateNode.execute(state)
+                         Runs 7 checks on the draft:
                          - Ticket # format (INC-XXXXXXX)?
                          - SLA wording correct?
                          - Required sections present?
@@ -786,16 +785,14 @@ your question, our team is looking into it' (Path B)."
                          - Source citations (Path A)?
                          - No PII leaked?
 
-                         Will be:
-                         src/pipeline/nodes/quality_gate.py
+                         src/orchestration/nodes/quality_gate.py
                                        |
                                        v
-                         delivery_placeholder(state)
-                         "TODO: Create ServiceNow ticket
-                          + send email via MS Graph API"
+                         DeliveryNode.execute(state)
+                         Creates ServiceNow ticket
+                         + sends email via MS Graph API
 
-                         Will be:
-                         src/pipeline/nodes/delivery.py
+                         src/orchestration/nodes/delivery.py
                                        |
                                        v
                                      __END__
@@ -822,7 +819,7 @@ your question, our team is looking into it' (Path B)."
   |                                                               |
   |  Push to human-review queue. PAUSE workflow."                 |
   |                                                               |
-  |  Will be: src/pipeline/nodes/triage.py                        |
+  |  File: src/orchestration/nodes/triage.py                      |
   |                                                               |
   |  Writes: status = "PAUSED"                                    |
   |                                                               |
@@ -881,7 +878,7 @@ your question, our team is looking into it' (Path B)."
                    |                             |
                    v                             v
           +------------------+          +------------------+
-          |     routing      |          |     triage       |  [STUB]
+          |     routing      |          |     triage       |
           +------------------+          +------------------+
           RoutingNode.execute                    |
           nodes/routing.py            add_edge("triage", END)
@@ -915,7 +912,7 @@ your question, our team is looking into it' (Path B)."
           |                 |
           v                 v
    +------------+   +---------------+
-   | resolution |   | acknowledgment|  [BOTH STUBS]
+   | resolution |   | acknowledgment|
    +------------+   +---------------+
           |                 |
           +--------+--------+
@@ -924,14 +921,14 @@ your question, our team is looking into it' (Path B)."
                    |
                    v
           +------------------+
-          |  quality_gate    |  [STUB]
+          |  quality_gate    |  QualityGateNode.execute
           +------------------+
                    |
         add_edge("quality_gate", "delivery")
                    |
                    v
           +------------------+
-          |    delivery      |  [STUB]
+          |    delivery      |  DeliveryNode.execute
           +------------------+
                    |
         add_edge("delivery", END)
@@ -980,17 +977,21 @@ your question, our team is looking into it' (Path B)."
 |      | (KB match >= 80%?   |   path_decision.py                     | (just     |
 |      |  has real content?) | --> PathDecisionNode.execute()         |  checks)  |
 +------+---------------------+----------------------------------------+-----------+
-| 10A  | Draft resolution    | [STUB] graph.py:resolution_placeholder | YES (#2) |
-|      | (full AI answer)    | Future: src/pipeline/nodes/resolution  | Claude    |
+| 10A  | Draft resolution    | src/orchestration/nodes/               | YES (#2) |
+|      | (full AI answer)    |   resolution.py                        | Claude    |
+|      |                     | --> ResolutionNode.execute()           |           |
 +------+---------------------+----------------------------------------+-----------+
-| 10B  | Draft acknowledgment| [STUB] graph.py:acknowledgment_placeholder| YES(#2)|
-|      | ("we got it" reply) | Future: src/pipeline/nodes/acknowledgment|         |
+| 10B  | Draft acknowledgment| src/orchestration/nodes/               | YES (#2)  |
+|      | ("we got it" reply) |   acknowledgment.py                    | Claude    |
+|      |                     | --> AcknowledgmentNode.execute()       |           |
 +------+---------------------+----------------------------------------+-----------+
-| 11   | Quality checks      | [STUB] graph.py:quality_gate_placeholder | No     |
-|      | (7 validation rules)| Future: src/pipeline/nodes/quality_gate|           |
+| 11   | Quality checks      | src/orchestration/nodes/               | No        |
+|      | (7 validation rules)|   quality_gate.py                      | (rule     |
+|      |                     | --> QualityGateNode.execute()          |  engine)  |
 +------+---------------------+----------------------------------------+-----------+
-| 12   | Create ticket +     | [STUB] graph.py:delivery_placeholder   | No        |
-|      | send email          | Future: src/pipeline/nodes/delivery    |           |
+| 12   | Create ticket +     | src/orchestration/nodes/               | No        |
+|      | send email          |   delivery.py                          |           |
+|      |                     | --> DeliveryNode.execute()             |           |
 +------+---------------------+----------------------------------------+-----------+
 
   Graph assembly:  src/orchestration/graph.py --> build_pipeline_graph()

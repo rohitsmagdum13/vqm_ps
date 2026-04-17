@@ -36,12 +36,12 @@ This file is read automatically by Claude Code at the start of every session. Fo
 - **README.md from the start.** Every change, every new file, every new feature, every phase — update `README.md` in the same session. README.md must always reflect the current state of the project. This is not optional and applies from the very first commit.
 
 ### Structured Logging Standard (ALWAYS ENFORCED)
-- **Direct structlog usage.** All application code uses `import structlog` / `logger = structlog.get_logger(__name__)`. Never use `import logging` / `logging.getLogger()` in application code — stdlib logging is only used inside `src/utils/logging_setup.py` for third-party library log handling.
+- **Direct structlog usage.** All application code uses `import structlog` / `logger = structlog.get_logger(__name__)`. Never use `import logging` / `logging.getLogger()` in application code — stdlib logging is only used inside `src/utils/logger.py` for third-party library log handling.
 - **Keyword arguments, not extra dicts.** Log calls use structlog kwargs: `logger.info("msg", key=value)`. Never use `extra={"key": value}`.
-- **`tool=` field on every connector log line.** All connectors in `src/connectors/` must include `tool="<name>"` (e.g., `tool="s3"`, `tool="postgresql"`, `tool="sqs"`, `tool="eventbridge"`, `tool="graph_api"`, `tool="salesforce"`) in every log call for CloudWatch filtering.
+- **`tool=` field on every adapter log line.** All adapters in `src/adapters/` must include `tool="<name>"` (e.g., `tool="s3"`, `tool="postgresql"`, `tool="sqs"`, `tool="eventbridge"`, `tool="graph_api"`, `tool="salesforce"`) in every log call for CloudWatch filtering.
 - **IST timestamps.** All log timestamps use IST (Indian Standard Time). Never override to UTC.
 - **contextvars for correlation_id.** Entry points call `structlog.contextvars.bind_contextvars(correlation_id=cid)` so downstream log calls automatically include it.
-- **`LoggingSetup.configure()` at startup.** Called once in `src/main.py` after all imports.
+- **`LoggingSetup.configure()` at startup.** Called once in `main.py` (project root) after all imports, before `create_app()` is called.
 
 ### Frontend Rules (ALWAYS ENFORCED)
 - **Angular 17+ strictly.** The frontend portal is built with Angular 17+ using standalone components and signals. Do NOT use React, Vue, Svelte, or any other frontend framework. All frontend code goes in `frontend/` and must be an Angular project.
@@ -114,14 +114,15 @@ This file is read automatically by Claude Code at the start of every session. Fo
 
 6. **Cloud-only connectors — NO local fallback mode.**
    - All connectors connect directly to real cloud services. There is NO "local" vs "aws" branching.
-   - **S3:** `src/connectors/s3.py` uses boto3 directly. No local filesystem fallback.
-   - **SQS:** `src/connectors/sqs.py` uses boto3 directly. No in-memory queue fallback.
-   - **EventBridge:** `src/connectors/eventbridge.py` uses boto3 directly. No local event list fallback.
-   - **Microsoft Graph API:** `src/connectors/graph_api.py` uses real MSAL auth + Graph API calls. No stub/mock.
+   - **S3:** `src/storage/s3_client.py` uses boto3 directly. No local filesystem fallback.
+   - **SQS:** `src/queues/sqs.py` uses boto3 directly. No in-memory queue fallback.
+   - **EventBridge:** `src/events/eventbridge.py` uses boto3 directly. No local event list fallback.
+   - **PostgreSQL:** `src/db/connection/` (folder module) connects via SSH tunnel to bastion → RDS. No local SQLite fallback.
+   - **Microsoft Graph API:** `src/adapters/graph_api/` (folder module) uses real MSAL auth + Graph API calls. No stub/mock.
    - **PostgreSQL:** Use real PostgreSQL on RDS via SSH tunnel.
    - For **testing**, use `moto` to mock AWS services. Tests do NOT require real AWS credentials.
 
-7. **Connector pattern — cloud-only, clean abstraction.** Every external system interaction MUST go through a connector in `src/connectors/`. The connector provides:
+7. **Adapter pattern — cloud-only, clean abstraction.** Every external system interaction MUST go through an adapter in `src/adapters/`. The adapter provides:
    - A clean async interface that the rest of the codebase imports
    - Proper error handling with `botocore.exceptions.ClientError`
    - Structured logging with correlation_id
@@ -225,7 +226,7 @@ Two files must stay current with the codebase at all times: `Flow.md` and `READM
 - Only document steps that have working code (or at least a function stub with `NotImplementedError`). Do not describe functions that do not exist in the codebase.
 - For every step, include:
   - What triggers this step
-  - Which exact file and function gets called (full path like `src/intake/email_intake.py` -> `fetch_and_parse_email()`)
+  - Which exact file and function gets called (full path like `src/services/email_intake/` -> `fetch_and_parse_email()`)
   - What input it receives (which Pydantic model or raw type)
   - What it does internally (plain English, step by step)
   - What output it produces (which Pydantic model or raw type)
@@ -272,7 +273,7 @@ Two files must stay current with the codebase at all times: `Flow.md` and `READM
 2. **After any pipeline change:** If you add, rename, or rewire any function in the query processing pipeline (email or portal path), update `Flow.md` in the same session.
 3. **After any setup change:** If you add a new package, env var, migration, or config file, update `README.md` in the same session.
 4. **Never let docs drift from code.** If `Flow.md` describes a function that no longer exists, or `README.md` says "run X" but X has changed, that is a bug. Fix it immediately.
-5. **Use real function names and file paths.** No placeholders like "the analysis module" — write `src/pipeline/nodes/query_analysis.py` -> `classify_query_intent()`.
+5. **Use real function names and file paths.** No placeholders like "the analysis module" — write `src/orchestration/nodes/query_analysis.py` -> `classify_query_intent()`.
 6. **Write like a person, not a brochure.** No "leveraging", no "comprehensive suite of", no "seamlessly integrates". Say what the code does. Period.
 
 ---
@@ -451,7 +452,7 @@ class EmailIntakeService:
 
 ## Project Folder Structure — 5-Layer Architecture
 
-The VQMS codebase is organized into **5 distinct layers**, each with a clear responsibility. This structure follows the architecture document and coding standards.
+The VQMS codebase is organized into **5 distinct layers**, each with a clear responsibility. Large modules have been split into **folder modules** (a folder with `__init__.py` + focused sub-files) for maintainability, while preserving all existing imports via re-exports in `__init__.py`. This structure follows the architecture document and coding standards.
 
 ```
 vqms/
@@ -475,29 +476,59 @@ vqms/
 │   .ruff.toml sets src = ["src"] for import sorting.
 │ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
 │
+├── main.py                          # Thin entry point — uvicorn main:app
+│
+├── app/                             # Application bootstrap (extracted from old main.py)
+│   ├── __init__.py                  #   Exports: create_app()
+│   ├── factory.py                   #   create_app() — FastAPI app creation
+│   ├── middleware.py                #   CORS, auth middleware, security headers
+│   ├── routes.py                    #   Router registration (include_router calls)
+│   └── lifespan.py                  #   Startup/shutdown events (DB pool, SSH tunnel)
+│
+├── config/                          # Configuration
+│   ├── __init__.py
+│   ├── settings.py                  #   Load .env, define all config constants
+│   └── s3_paths.py                  #   S3 key builder utility
+│
 ├── src/
-│   ├── main.py                      # Entry point — starts the FastAPI server
 │   │
 │   │ ─ ─ LAYER 1: DATA SHAPES ─ ─ ─
 │   ├── models/                      # Pydantic models — the shape of every data object
 │   │   ├── __init__.py
 │   │   ├── email.py                 #   ParsedEmailPayload, EmailAttachment
+│   │   ├── email_dashboard.py       #   EmailDashboardResponse, EmailStats
 │   │   ├── query.py                 #   QuerySubmission (portal), UnifiedQueryPayload
 │   │   ├── auth.py                  #   UserRecord, LoginRequest, LoginResponse, TokenPayload
 │   │   ├── vendor.py                #   VendorProfile, VendorMatch, VendorTier, VendorUpdateRequest
-│   │   ├── analysis.py              #   AnalysisResult (from Query Analysis Agent)
-│   │   ├── routing.py               #   RoutingDecision, SLATarget
-│   │   ├── kb.py                    #   KBArticleMatch, KBSearchResult
+│   │   ├── communication.py         #   CommunicationModels
 │   │   ├── ticket.py                #   TicketCreateRequest, TicketInfo
-│   │   ├── draft.py                 #   DraftResponse, QualityGateResult
 │   │   ├── triage.py                #   TriagePackage, ReviewerDecision (Path C)
 │   │   ├── memory.py                #   EpisodicMemoryEntry, VendorContext
-│   │   └── pipeline_state.py        #   PipelineState (TypedDict for LangGraph state machine)
+│   │   └── workflow.py              #   PipelineState, WorkflowModels
 │   │
-│   │ ─ ─ LAYER 1B: AUTH + VENDOR API ─ ─ ─
+│   │ ─ ─ LAYER 1B: SERVICES ─ ─ ─
 │   ├── services/                    # Business logic services
 │   │   ├── __init__.py
-│   │   └── auth.py                  #   authenticate_user, create/validate/blacklist JWT tokens
+│   │   ├── auth.py                  #   authenticate_user, create/validate/blacklist JWT tokens
+│   │   ├── polling.py               #   Email polling service
+│   │   ├── attachment_manifest.py   #   Attachment manifest generation
+│   │   ├── portal_submission.py     #   Portal query submission service
+│   │   │
+│   │   ├── email_intake/            #   [FOLDER MODULE — split from email_intake.py]
+│   │   │   ├── __init__.py          #     Exports: EmailIntakeService
+│   │   │   ├── service.py           #     EmailIntakeService class — main orchestrator
+│   │   │   ├── parser.py            #     MIME parsing, header extraction, body cleanup
+│   │   │   ├── attachment_processor.py  #  Attachment validation, text extraction
+│   │   │   ├── vendor_identifier.py #     Vendor identification from sender
+│   │   │   ├── thread_correlator.py #     Thread correlation: In-Reply-To, References
+│   │   │   └── storage.py           #     S3 raw email storage + PostgreSQL metadata write
+│   │   │
+│   │   └── email_dashboard/         #   [FOLDER MODULE — split from email_dashboard.py]
+│   │       ├── __init__.py          #     Exports: EmailDashboardService
+│   │       ├── service.py           #     EmailDashboardService class — main facade
+│   │       ├── mappings.py          #     Status/category mapping constants
+│   │       ├── queries.py           #     Database query builders
+│   │       └── formatters.py        #     Response formatting and serialization
 │   │
 │   ├── api/                         # API layer (middleware + routes)
 │   │   ├── __init__.py
@@ -507,24 +538,23 @@ vqms/
 │   │   └── routes/
 │   │       ├── __init__.py
 │   │       ├── auth.py              #   POST /auth/login, POST /auth/logout
-│   │       └── vendors.py           #   GET /vendors, PUT /vendors/{vendor_id}
+│   │       ├── dashboard.py         #   GET /dashboard/kpis, email dashboard endpoints
+│   │       ├── portal_dashboard.py  #   Portal-specific dashboard endpoints
+│   │       ├── queries.py           #   POST /queries, GET /queries/{id}
+│   │       ├── vendors.py           #   GET /vendors, PUT /vendors/{vendor_id}
+│   │       └── webhooks.py          #   POST /webhooks/ms-graph, /webhooks/servicenow
 │   │
 │   ├── cache/                       # Cache helpers
 │   │   ├── __init__.py
-│   │   └── pg_cache.py              #   auth_blacklist_key(), set_with_ttl(), exists_key() — PostgreSQL kv_store
+│   │   └── cache_client.py          #   CacheClient — PostgreSQL kv_store operations
 │   │
-│   │ ─ ─ LAYER 2: INTAKE ─ ─ ─
-│   ├── intake/                      # Both entry points live here
-│   │   ├── __init__.py
-│   │   ├── email_intake.py          #   Steps E1-E2.9: fetch, parse, store, identify, queue
-│   │   ├── portal_intake.py         #   Steps P1-P6: validate, generate IDs, queue
-│   │   └── routes.py                #   FastAPI routes: POST /queries, GET /emails, webhooks
-│   │
-│   │ ─ ─ LAYER 3: AI PIPELINE ─ ─ ─
-│   ├── pipeline/                    # LangGraph state machine + all nodes
+│   │ ─ ─ LAYER 3: AI PIPELINE (ORCHESTRATION) ─ ─ ─
+│   ├── orchestration/               # LangGraph state machine + all nodes
 │   │   ├── __init__.py
 │   │   ├── graph.py                 #   The main StateGraph — wires all nodes + edges
-│   │   ├── consumer.py              #   SQS consumer — pulls messages and feeds the graph
+│   │   ├── sqs_consumer.py          #   SQS consumer — pulls messages and feeds the graph
+│   │   ├── dependencies.py          #   Dependency injection for pipeline nodes
+│   │   ├── studio.py                #   LangGraph Studio integration
 │   │   ├── nodes/                   #   One file per pipeline step (each is a graph node)
 │   │   │   ├── __init__.py
 │   │   │   ├── context_loading.py   #     Step 7:  Load vendor profile + history from Salesforce/memory
@@ -535,41 +565,71 @@ vqms/
 │   │   │   ├── path_decision.py     #     Decision Point 2: Path A vs Path B
 │   │   │   ├── resolution.py        #     Step 10A: LLM Call #2 — full answer from KB (Path A)
 │   │   │   ├── acknowledgment.py    #     Step 10B: LLM Call #2 — acknowledgment only (Path B)
-│   │   │   ├── triage.py            #     Path C:  Create TriagePackage, pause for human review
 │   │   │   ├── quality_gate.py      #     Step 11: 7 quality checks on drafted email
 │   │   │   └── delivery.py          #     Step 12: Create ticket + send email via Graph API
-│   │   └── prompts/                 #   Versioned prompt templates (Jinja2)
-│   │       ├── query_analysis_v1.j2
-│   │       ├── resolution_v1.j2
-│   │       ├── acknowledgment_v1.j2
-│   │       └── resolution_from_notes_v1.j2
+│   │   └── prompts/                 #   Versioned prompt templates
+│   │       └── prompt_manager.py    #     Prompt loading and versioning
 │   │
-│   │ ─ ─ LAYER 4: CONNECTORS ─ ─ ─
-│   ├── connectors/                  # Every external system gets one file
+│   │ ─ ─ LAYER 4: ADAPTERS (External System Connectors) ─ ─ ─
+│   ├── adapters/                    # Every external system gets a module
 │   │   ├── __init__.py
 │   │   ├── bedrock.py               #   Amazon Bedrock — Claude LLM + Titan embeddings
-│   │   ├── graph_api.py             #   Microsoft Graph API — fetch/send emails
-│   │   ├── salesforce.py            #   Salesforce CRM — vendor lookup
-│   │   ├── servicenow.py            #   ServiceNow ITSM — ticket create/update
-│   │   ├── s3.py                    #   AWS S3 — raw email + KB storage
-│   │   ├── sqs.py                   #   AWS SQS — message queues
-│   │   ├── eventbridge.py           #   AWS EventBridge — event publishing
-│   │   └── postgres.py              #   PostgreSQL — DB ops, idempotency, caching (via SSH tunnel)
+│   │   ├── llm_gateway.py           #   LLM Gateway — unified LLM interface
+│   │   ├── openai_llm.py            #   OpenAI LLM adapter
+│   │   │
+│   │   ├── graph_api/               #   [FOLDER MODULE — split from graph_api.py]
+│   │   │   ├── __init__.py          #     Exports: GraphAPIConnector (combines mixins)
+│   │   │   ├── client.py            #     GraphAPIClient — MSAL auth, token management
+│   │   │   ├── email_fetch.py       #     EmailFetchMixin — fetch_email, list_unread_messages
+│   │   │   ├── email_send.py        #     EmailSendMixin — send_email
+│   │   │   └── webhook.py           #     WebhookMixin — subscribe_webhook, download_large_attachment
+│   │   │
+│   │   ├── salesforce/              #   [FOLDER MODULE — split from salesforce.py]
+│   │   │   ├── __init__.py          #     Exports: SalesforceAdapter (combines mixins)
+│   │   │   ├── client.py            #     SalesforceClient — auth, session, helpers
+│   │   │   ├── vendor_lookup.py     #     VendorLookupMixin — vendor search by ID/email/name
+│   │   │   └── account_operations.py #    AccountOperationsMixin — account CRUD
+│   │   │
+│   │   └── servicenow/              #   [FOLDER MODULE — split from servicenow.py]
+│   │       ├── __init__.py          #     Exports: ServiceNowConnector (combines mixins)
+│   │       ├── client.py            #     ServiceNowClient — lazy httpx client, shared helpers
+│   │       ├── ticket_create.py     #     TicketCreateMixin — create_ticket()
+│   │       └── ticket_query.py      #     TicketQueryMixin — get_ticket, get_work_notes, update_status
 │   │
 │   │ ─ ─ LAYER 5: SUPPORTING ─ ─ ─
-│   ├── config/                      # Configuration
+│   ├── storage/                     # Storage connectors
 │   │   ├── __init__.py
-│   │   └── settings.py              #   Load .env, define all config constants
+│   │   └── s3_client.py             #   AWS S3 — raw email + KB storage
+│   │
+│   ├── queues/                      # Message queue connectors
+│   │   ├── __init__.py
+│   │   └── sqs.py                   #   AWS SQS — message queues + DLQ
+│   │
+│   ├── events/                      # Event publishing
+│   │   ├── __init__.py
+│   │   └── eventbridge.py           #   AWS EventBridge — publishes all event types
 │   │
 │   ├── utils/                       # Utility modules
 │   │   ├── __init__.py
 │   │   ├── helpers.py               #   ist_now(), generate_query_id(), generate_correlation_id()
-│   │   ├── logging_setup.py         #   Structured logging (structlog + JSON + LogContext)
+│   │   ├── logger.py                #   Structured logging (structlog + JSON + LogContext)
 │   │   ├── exceptions.py            #   Domain exceptions: DuplicateQueryError, etc.
-│   │   └── decorators.py            #   @log_api_call, @log_service_call, @log_llm_call, @log_policy_decision
+│   │   └── decorators/              #   [FOLDER MODULE — split from decorators.py]
+│   │       ├── __init__.py          #     Exports: log_api_call, log_service_call, log_llm_call, log_policy_decision
+│   │       ├── helpers.py           #     Shared helpers: is_known_provider_error, extract_correlation_id
+│   │       ├── api.py               #     @log_api_call — FastAPI route handlers
+│   │       ├── service.py           #     @log_service_call — service/adapter methods
+│   │       ├── llm.py               #     @log_llm_call — LLM factory functions
+│   │       └── policy.py            #     @log_policy_decision — confidence/routing decisions
 │   │
 │   └── db/                          # Database
-│       └── migrations/              #   SQL migration files (000–009)
+│       ├── __init__.py
+│       ├── connection/              #   [FOLDER MODULE — split from connection.py]
+│       │   ├── __init__.py          #     Exports: PostgresConnector (combines mixins)
+│       │   ├── client.py            #     PostgresClient — SSH tunnel, asyncpg pool, connect/disconnect
+│       │   ├── queries.py           #     QueryMixin — execute, fetch, fetchrow, idempotency, cache_read
+│       │   └── health.py            #     HealthMixin — health_check, run_migrations_sync
+│       └── migrations/              #   SQL migration files (000–010)
 │           ├── 000_reset_schemas.sql
 │           ├── 001_create_schemas.sql
 │           ├── 002_enable_pgvector.sql
@@ -579,7 +639,8 @@ vqms/
 │           ├── 006_create_memory_tables.sql
 │           ├── 007_create_reporting_tables.sql
 │           ├── 008_create_cache_tables.sql
-│           └── 009_auth_tables_documentation.sql
+│           ├── 009_auth_tables_documentation.sql
+│           └── 010_create_portal_queries_table.sql
 │
 ├── tests/                           # Testing (pythonpath includes src/)
 │   ├── __init__.py
@@ -620,18 +681,18 @@ vqms/
 | I want to...                              | Put it in...                                          |
 |-------------------------------------------|-------------------------------------------------------|
 | Add a new Pydantic data model             | `src/models/` (one model class per domain concept)     |
-| Add email ingestion logic                 | `src/intake/email_intake.py`                           |
-| Add portal submission logic               | `src/intake/portal_intake.py`                          |
-| Add a FastAPI route                       | `src/intake/routes.py`                                 |
-| Add a new LangGraph pipeline node         | `src/pipeline/nodes/` (one file per step)              |
-| Wire up the LangGraph state machine       | `src/pipeline/graph.py`                                |
-| Add a new prompt template                 | `src/pipeline/prompts/<name>_v<N>.j2`               |
-| Add an external system connector          | `src/connectors/` (one file per external system)       |
+| Add email ingestion logic                 | `src/services/email_intake/` (folder module)           |
+| Add portal submission logic               | `src/services/portal_submission.py`                    |
+| Add a FastAPI route                       | `src/api/routes/` (one file per resource)              |
+| Add a new LangGraph pipeline node         | `src/orchestration/nodes/` (one file per step)         |
+| Wire up the LangGraph state machine       | `src/orchestration/graph.py`                           |
+| Add a new prompt template                 | `src/orchestration/prompts/`                           |
+| Add an external system adapter            | `src/adapters/` (folder module for large adapters)     |
 | Add a domain exception class              | `src/utils/exceptions.py`                              |
 | Add a utility/helper function             | `src/utils/helpers.py`                                 |
-| Add a logging decorator                   | `src/utils/decorators.py`                              |
+| Add a logging decorator                   | `src/utils/decorators/` (folder module)                |
 | Add a database migration                  | `src/db/migrations/` (new SQL file)                    |
-| Add a config constant                     | `src/config/settings.py`                               |
+| Add a config constant                     | `config/settings.py`                                   |
 | Add/update environment variable           | `.env` AND `.env.copy`                             |
 | Write a unit test                         | `tests/test_<module_name>.py`                      |
 | Write an LLM eval test                    | `tests/evals/`                                     |
@@ -648,34 +709,35 @@ vqms/
 ## VQMS System Components Reference
 
 ### Entry Points (Two Paths Into the System)
-1. **Email Path** — Vendor sends email to vendor-support@company.com. Email Ingestion Service (`src/intake/email_intake.py`) fetches via Graph API webhook + reconciliation polling (every 5 minutes). Includes: dual detection (webhook + polling), PostgreSQL idempotency check (INSERT ON CONFLICT, 7-day TTL), MIME parsing, attachment extraction (PDF/Excel/Word/CSV/images via pdfplumber/openpyxl/python-docx/Textract), vendor identification from sender email via Salesforce (3-step fallback: exact email → body extraction → fuzzy name match), thread correlation (In-Reply-To/References/conversationId), raw email storage in S3, PostgreSQL metadata write, EventBridge event publish, SQS enqueue. Output: ParsedEmailPayload on vqms-email-intake-queue.
-2. **Portal Path** — Vendor logs into VQMS portal (Cognito + optional SSO), fills wizard form (type, details, review), submits via POST /queries with JWT auth. Portal Submission Service (`src/intake/portal_intake.py`) validates via Pydantic, generates query_id (VQ-2026-XXXX format), returns query_id instantly (~400ms). Output: query payload on vqms-query-intake-queue. No thread correlation (portal queries are always NEW). No raw email storage. Vendor ID from JWT, not sender email matching.
+1. **Email Path** — Vendor sends email to vendor-support@company.com. Email Ingestion Service (`src/services/email_intake/`) fetches via Graph API webhook + reconciliation polling (every 5 minutes). Includes: dual detection (webhook + polling), PostgreSQL idempotency check (INSERT ON CONFLICT, 7-day TTL), MIME parsing, attachment extraction (PDF/Excel/Word/CSV/images via pdfplumber/openpyxl/python-docx/Textract), vendor identification from sender email via Salesforce (3-step fallback: exact email → body extraction → fuzzy name match), thread correlation (In-Reply-To/References/conversationId), raw email storage in S3, PostgreSQL metadata write, EventBridge event publish, SQS enqueue. Output: ParsedEmailPayload on vqms-email-intake-queue.
+2. **Portal Path** — Vendor logs into VQMS portal (Cognito + optional SSO), fills wizard form (type, details, review), submits via POST /queries with JWT auth. Portal Submission Service (`src/services/portal_submission.py`) validates via Pydantic, generates query_id (VQ-2026-XXXX format), returns query_id instantly (~400ms). Output: query payload on vqms-query-intake-queue. No thread correlation (portal queries are always NEW). No raw email storage. Vendor ID from JWT, not sender email matching.
 
-### AI Pipeline Nodes (LangGraph State Machine — `src/pipeline/`)
-1. **Context Loading Node** (`src/pipeline/nodes/context_loading.py`) — Step 7: Loads vendor profile from Salesforce (cached in PostgreSQL, 1-hour TTL), loads episodic memory (last 5 vendor interactions), caches workflow state in PostgreSQL (24-hour TTL), updates status to ANALYZING.
-2. **Query Analysis Node** (`src/pipeline/nodes/query_analysis.py`) — Step 8: LLM Call #1 via Bedrock Claude Sonnet 3.5 (temperature 0.1, ~1500 tokens in, ~500 tokens out). Extracts: intent classification, entities (invoice numbers, dates, amounts, PO numbers), urgency level, sentiment, confidence score (0.0–1.0), multi-issue detection, suggested_category. Output: AnalysisResult. Uses 8-layer defense strategy (input validation → prompt engineering → LLM call with retry → output parsing → Pydantic validation → self-correction → safe fallback → audit logging).
-3. **Confidence Check Node** (`src/pipeline/nodes/confidence_check.py`) — Decision Point 1: Confidence >= 0.85 → continue to Step 9 (Routing + KB Search). Confidence < 0.85 → Path C (workflow PAUSES for human review).
-4. **Routing Node** (`src/pipeline/nodes/routing.py`) — Step 9A: Deterministic rules engine. Evaluates: confidence >= 0.85, urgency == CRITICAL, existing ticket, BLOCK_AUTOMATION flag. Determines team assignment and SLA target based on vendor tier + urgency. Output: RoutingDecision.
-5. **KB Search Node** (`src/pipeline/nodes/kb_search.py`) — Step 9B: Embeds query text using Bedrock Titan Embed v2 → vector(1536), cosine similarity search against KB article embeddings in PostgreSQL (`memory.embedding_index` table via pgvector), filtered by category. Returns ranked article matches with similarity scores.
-6. **Path Decision Node** (`src/pipeline/nodes/path_decision.py`) — Decision Point 2: KB match >= 80% AND answer has specific facts AND Resolution Agent confidence >= 0.85 → Path A. Otherwise → Path B.
-7. **Resolution Node** (`src/pipeline/nodes/resolution.py`) — Step 10A (Path A only): LLM Call #2 via Bedrock Claude Sonnet 3.5 (temperature 0.3, ~3000 tokens in). Generates full resolution email using KB articles as source. Output: DraftResponse with concrete facts, confidence score, and source citations.
-8. **Acknowledgment Node** (`src/pipeline/nodes/acknowledgment.py`) — Step 10B (Path B only): LLM Call #2 via Bedrock Claude Sonnet 3.5. Generates ACKNOWLEDGMENT-ONLY email with ticket number, SLA statement, next steps — NO answer content.
-9. **Triage Node** (`src/pipeline/nodes/triage.py`) — Path C: Creates TriagePackage (original query + AI analysis + confidence breakdown + suggested routing + suggested draft), pushes to human-review queue, pauses workflow via callback token.
-10. **Quality Gate Node** (`src/pipeline/nodes/quality_gate.py`) — Step 11: 7 deterministic checks on every outbound draft. Phase 1 (always): ticket # format (INC-XXXXXXX), SLA wording matches vendor tier policy, required sections present (greeting, body, next steps, closing), restricted terms scan (no internal jargon, no competitor names), response length (50–500 words), source citations (Path A only). Phase 2 (conditional, HIGH+ priority): PII scan via Amazon Comprehend. Max 2 re-drafts before routing to human review.
-11. **Delivery Node** (`src/pipeline/nodes/delivery.py`) — Step 12: Creates ticket in ServiceNow, sends validated email to vendor via MS Graph /sendMail, updates case status, publishes completion events.
+### AI Pipeline Nodes (LangGraph State Machine — `src/orchestration/`)
+1. **Context Loading Node** (`src/orchestration/nodes/context_loading.py`) — Step 7: Loads vendor profile from Salesforce (cached in PostgreSQL, 1-hour TTL), loads episodic memory (last 5 vendor interactions), caches workflow state in PostgreSQL (24-hour TTL), updates status to ANALYZING.
+2. **Query Analysis Node** (`src/orchestration/nodes/query_analysis.py`) — Step 8: LLM Call #1 via Bedrock Claude Sonnet 3.5 (temperature 0.1, ~1500 tokens in, ~500 tokens out). Extracts: intent classification, entities (invoice numbers, dates, amounts, PO numbers), urgency level, sentiment, confidence score (0.0–1.0), multi-issue detection, suggested_category. Output: AnalysisResult. Uses 8-layer defense strategy (input validation → prompt engineering → LLM call with retry → output parsing → Pydantic validation → self-correction → safe fallback → audit logging).
+3. **Confidence Check Node** (`src/orchestration/nodes/confidence_check.py`) — Decision Point 1: Confidence >= 0.85 → continue to Step 9 (Routing + KB Search). Confidence < 0.85 → Path C (workflow PAUSES for human review).
+4. **Routing Node** (`src/orchestration/nodes/routing.py`) — Step 9A: Deterministic rules engine. Evaluates: confidence >= 0.85, urgency == CRITICAL, existing ticket, BLOCK_AUTOMATION flag. Determines team assignment and SLA target based on vendor tier + urgency. Output: RoutingDecision.
+5. **KB Search Node** (`src/orchestration/nodes/kb_search.py`) — Step 9B: Embeds query text using Bedrock Titan Embed v2 → vector(1536), cosine similarity search against KB article embeddings in PostgreSQL (`memory.embedding_index` table via pgvector), filtered by category. Returns ranked article matches with similarity scores.
+6. **Path Decision Node** (`src/orchestration/nodes/path_decision.py`) — Decision Point 2: KB match >= 80% AND answer has specific facts AND Resolution Agent confidence >= 0.85 → Path A. Otherwise → Path B.
+7. **Resolution Node** (`src/orchestration/nodes/resolution.py`) — Step 10A (Path A only): LLM Call #2 via Bedrock Claude Sonnet 3.5 (temperature 0.3, ~3000 tokens in). Generates full resolution email using KB articles as source. Output: DraftResponse with concrete facts, confidence score, and source citations.
+8. **Acknowledgment Node** (`src/orchestration/nodes/acknowledgment.py`) — Step 10B (Path B only): LLM Call #2 via Bedrock Claude Sonnet 3.5. Generates ACKNOWLEDGMENT-ONLY email with ticket number, SLA statement, next steps — NO answer content.
+9. **Triage Node** (`src/orchestration/nodes/triage.py`) — Path C: Creates TriagePackage (original query + AI analysis + confidence breakdown + suggested routing + suggested draft), pushes to human-review queue, pauses workflow via callback token.
+10. **Quality Gate Node** (`src/orchestration/nodes/quality_gate.py`) — Step 11: 7 deterministic checks on every outbound draft. Phase 1 (always): ticket # format (INC-XXXXXXX), SLA wording matches vendor tier policy, required sections present (greeting, body, next steps, closing), restricted terms scan (no internal jargon, no competitor names), response length (50–500 words), source citations (Path A only). Phase 2 (conditional, HIGH+ priority): PII scan via Amazon Comprehend. Max 2 re-drafts before routing to human review.
+11. **Delivery Node** (`src/orchestration/nodes/delivery.py`) — Step 12: Creates ticket in ServiceNow, sends validated email to vendor via MS Graph /sendMail, updates case status, publishes completion events.
 
-### Connectors (External System Interfaces — `src/connectors/`)
-- **Bedrock** (`src/connectors/bedrock.py`) — ALL LLM inference (Claude Sonnet 3.5) and embedding (Titan Embed v2) calls. Nobody calls LLM providers directly — all calls go through this connector. Key functions: `llm_complete(prompt, system_prompt, temperature, max_tokens, correlation_id)` returns dict with response_text, tokens_in, tokens_out, cost_usd, latency_ms; `llm_embed(text, correlation_id)` returns vector(1536). Retry with exponential backoff for ThrottlingException and ServiceUnavailableException.
-- **Microsoft Graph API** (`src/connectors/graph_api.py`) — Email fetch (GET /messages/{id}), email send (/sendMail), webhook subscription, reconciliation polling.
-- **Salesforce** (`src/connectors/salesforce.py`) — Vendor lookup by vendor_id, contact matching by email, fuzzy name match. Three-step fallback chain.
-- **ServiceNow** (`src/connectors/servicenow.py`) — Ticket creation (POST /api/now/table/incident), status updates, work note reads.
-- **S3** (`src/connectors/s3.py`) — Upload, download, existence check, list, delete for the single S3 bucket (`vqms-data-store`), prefix-organized by VQ-ID.
-- **SQS** (`src/connectors/sqs.py`) — Producer/consumer for all SQS queues + DLQ.
-- **EventBridge** (`src/connectors/eventbridge.py`) — Publishes all 20 EventBridge event types.
-- **PostgreSQL** (`src/connectors/postgres.py`) — Database operations via SSH tunnel to bastion → RDS. Also handles idempotency checks (INSERT ON CONFLICT with TTL), vendor profile caching, and workflow state caching.
+### Adapters (External System Interfaces — `src/adapters/`)
+- **Bedrock** (`src/adapters/bedrock.py`) — ALL LLM inference (Claude Sonnet 3.5) and embedding (Titan Embed v2) calls. Nobody calls LLM providers directly — all calls go through this adapter. Key functions: `llm_complete(prompt, system_prompt, temperature, max_tokens, correlation_id)` returns dict with response_text, tokens_in, tokens_out, cost_usd, latency_ms; `llm_embed(text, correlation_id)` returns vector(1536). Retry with exponential backoff for ThrottlingException and ServiceUnavailableException.
+- **LLM Gateway** (`src/adapters/llm_gateway.py`) — Unified LLM interface abstracting over Bedrock and OpenAI.
+- **Microsoft Graph API** (`src/adapters/graph_api/`) — Folder module: `client.py` (MSAL auth), `email_fetch.py` (GET /messages), `email_send.py` (/sendMail), `webhook.py` (subscription + large attachments). Combined via `GraphAPIConnector` in `__init__.py`.
+- **Salesforce** (`src/adapters/salesforce/`) — Folder module: `client.py` (auth, session), `vendor_lookup.py` (vendor search by ID/email/name), `account_operations.py` (account CRUD). Combined via `SalesforceAdapter` in `__init__.py`.
+- **ServiceNow** (`src/adapters/servicenow/`) — Folder module: `client.py` (httpx client, helpers), `ticket_create.py` (POST /api/now/table/incident), `ticket_query.py` (lookup, work notes, status updates). Combined via `ServiceNowConnector` in `__init__.py`.
+- **S3** (`src/storage/s3_client.py`) — Upload, download, existence check, list, delete for the single S3 bucket (`vqms-data-store`), prefix-organized by VQ-ID.
+- **SQS** (`src/queues/sqs.py`) — Producer/consumer for all SQS queues + DLQ.
+- **EventBridge** (`src/events/eventbridge.py`) — Publishes all 20 EventBridge event types.
+- **PostgreSQL** (`src/db/connection/`) — Folder module: `client.py` (SSH tunnel, asyncpg pool), `queries.py` (execute, fetch, idempotency, cache), `health.py` (health check, migrations). Combined via `PostgresConnector` in `__init__.py`.
 
 ### Data Infrastructure
-- **1 S3 Bucket (prefix-organized):** `vqms-data-store` with prefixes: `inbound-emails/`, `attachments/`, `processed/`, `templates/`, `archive/`. All files organized by VQ-ID under their prefix (e.g., `inbound-emails/VQ-2026-0001/raw_email.json`). S3 keys are built via `src/config/s3_paths.py` → `build_s3_key()`. Vector embeddings are stored in PostgreSQL via pgvector.
+- **1 S3 Bucket (prefix-organized):** `vqms-data-store` with prefixes: `inbound-emails/`, `attachments/`, `processed/`, `templates/`, `archive/`. All files organized by VQ-ID under their prefix (e.g., `inbound-emails/VQ-2026-0001/raw_email.json`). S3 keys are built via `config/s3_paths.py` → `build_s3_key()`. Vector embeddings are stored in PostgreSQL via pgvector.
 - **PostgreSQL Schemas:** intake (email_messages, email_attachments), workflow (case_execution, ticket_link, routing_decision), memory (episodic_memory, vendor_profile_cache, embedding_index), audit (action_log, validation_results), reporting (sla_metrics), cache (idempotency_keys, vendor_cache, workflow_state_cache)
 - **SQS Queues + DLQ:** email-intake, query-intake (portal), analysis, vendor-resolution, ticket-ops, routing, communication, escalation, human-review, audit, dlq
 - **20 EventBridge Events:** EmailReceived, EmailParsed, QueryReceived, AnalysisCompleted, VendorResolved, TicketCreated, TicketUpdated, DraftPrepared, ValidationPassed, ValidationFailed, EmailSent, SLAWarning70, SLAEscalation85, SLAEscalation95, VendorReplyReceived, ResolutionPrepared, TicketClosed, TicketReopened, HumanReviewRequired, HumanReviewCompleted
@@ -694,7 +756,7 @@ vqms/
 
 ## Email Ingestion Pipeline — Defense-in-Depth (7 Layers)
 
-The email ingestion system (`src/intake/email_intake.py`) implements 7 layers of resilience to ensure no email is ever lost or silently dropped.
+The email ingestion system (`src/services/email_intake/`) implements 7 layers of resilience to ensure no email is ever lost or silently dropped.
 
 ### Layer 1 — Dual Detection
 Two independent mechanisms catch incoming emails simultaneously:
@@ -828,7 +890,7 @@ The Query Analysis Agent is the most critical component because every vendor que
 
 ## API Endpoints
 
-All endpoints are served by FastAPI (via `src/intake/routes.py`) behind API Gateway with Cognito JWT authorization.
+All endpoints are served by FastAPI (via `src/api/routes/`) behind API Gateway with Cognito JWT authorization.
 
 | Endpoint | Method | Purpose | Auth |
 |----------|--------|---------|------|
@@ -853,16 +915,16 @@ All endpoints are served by FastAPI (via `src/intake/routes.py`) behind API Gate
 
 | Document Component | Code Module | Phase |
 |---|---|---|
-| Email Ingestion (Steps E1-E2) | `src/intake/email_intake.py` | Phase 2 |
-| Portal Submission (Steps P1-P6) | `src/intake/routes.py` + `src/intake/portal_intake.py` | Phase 2 |
-| LangGraph Orchestrator (Step 7) | `src/pipeline/graph.py` | Phase 3 |
-| Query Analysis Agent (Step 8) | `src/pipeline/nodes/query_analysis.py` | Phase 3 |
-| Routing + KB Search (Step 9) | `src/pipeline/nodes/routing.py` + `src/pipeline/nodes/kb_search.py` | Phase 3 |
-| Resolution Agent (Step 10A) | `src/pipeline/nodes/resolution.py` | Phase 4 |
-| Communication Agent (Step 10B) | `src/pipeline/nodes/acknowledgment.py` | Phase 4 |
-| Quality Gate (Step 11) | `src/pipeline/nodes/quality_gate.py` | Phase 4 |
-| Ticket + Email Delivery (Step 12) | `src/pipeline/nodes/delivery.py` + `src/connectors/servicenow.py` + `src/connectors/graph_api.py` | Phase 4 |
-| Path C Triage (Steps 8C.1-8C.3) | `src/pipeline/nodes/triage.py` + `src/intake/routes.py` (triage endpoints) | Phase 5 |
+| Email Ingestion (Steps E1-E2) | `src/services/email_intake/` | Phase 2 |
+| Portal Submission (Steps P1-P6) | `src/api/routes/` + `src/services/portal_submission.py` | Phase 2 |
+| LangGraph Orchestrator (Step 7) | `src/orchestration/graph.py` | Phase 3 |
+| Query Analysis Agent (Step 8) | `src/orchestration/nodes/query_analysis.py` | Phase 3 |
+| Routing + KB Search (Step 9) | `src/orchestration/nodes/routing.py` + `src/orchestration/nodes/kb_search.py` | Phase 3 |
+| Resolution Agent (Step 10A) | `src/orchestration/nodes/resolution.py` | Phase 4 |
+| Communication Agent (Step 10B) | `src/orchestration/nodes/acknowledgment.py` | Phase 4 |
+| Quality Gate (Step 11) | `src/orchestration/nodes/quality_gate.py` | Phase 4 |
+| Ticket + Email Delivery (Step 12) | `src/orchestration/nodes/delivery.py` + `src/adapters/servicenow/` + `src/adapters/graph_api/` | Phase 4 |
+| Path C Triage (Steps 8C.1-8C.3) | `src/orchestration/nodes/triage.py` + `src/api/routes/` (triage endpoints) | Phase 5 |
 | SLA Monitor (Step 13) | Background monitoring module | Phase 6 |
 | Closure/Reopen (Step 16) | Closure module | Phase 6 |
 | Vendor Portal (Angular) | `frontend/src/` | Phase 7 |
@@ -873,16 +935,16 @@ All endpoints are served by FastAPI (via `src/intake/routes.py`) behind API Gate
 
 | Module | Responsibility | Key Dependencies |
 |--------|---------------|------------------|
-| `src/intake/email_intake.py` | MS Graph webhook/polling, MIME parsing, vendor identification, thread correlation, idempotency, SQS publishing | `src/connectors/graph_api.py`, `src/connectors/salesforce.py`, `src/connectors/postgres.py`, `src/connectors/sqs.py`, `src/connectors/s3.py` |
-| `src/intake/portal_intake.py` | JWT-based query submission, Pydantic validation, ID generation, idempotency, SQS publishing | `src/connectors/postgres.py`, `src/connectors/sqs.py` |
-| `src/pipeline/graph.py` | LangGraph workflow graph: context loading, agent routing, parallel KB+routing, confidence branching, Path A/B/C dispatch | All `src/pipeline/nodes/`, `src/connectors/` |
-| `src/pipeline/nodes/query_analysis.py` | LLM Call #1: intent classification, entity extraction, confidence scoring, sentiment analysis | `src/connectors/bedrock.py`, `src/connectors/postgres.py` |
-| `src/pipeline/nodes/routing.py` | Deterministic rules engine: confidence, urgency, team assignment, SLA calculation | `src/connectors/postgres.py` |
-| `src/pipeline/nodes/kb_search.py` | Embedding + cosine similarity search over pgvector (memory.embedding_index), category-filtered | `src/connectors/bedrock.py`, `src/connectors/postgres.py` |
-| `src/pipeline/nodes/resolution.py` | LLM Call #2: draft resolution email from KB facts + vendor context | `src/connectors/bedrock.py` |
-| `src/pipeline/nodes/acknowledgment.py` | LLM Call: draft acknowledgment email (Path B) or resolution email from human notes (Step 15) | `src/connectors/bedrock.py` |
-| `src/pipeline/nodes/quality_gate.py` | 7-check validation: ticket format (INC-XXXXXXX), SLA wording, required sections (greeting, body, next steps, closing), restricted terms, length (50–500 words), source citations, PII scan | Rule engine, Amazon Comprehend |
-| `src/pipeline/nodes/delivery.py` | ServiceNow ticket creation + MS Graph email delivery | `src/connectors/servicenow.py`, `src/connectors/graph_api.py` |
+| `src/services/email_intake/` | MS Graph webhook/polling, MIME parsing, vendor identification, thread correlation, idempotency, SQS publishing | `src/adapters/graph_api/`, `src/adapters/salesforce/`, `src/db/connection/`, `src/queues/sqs.py`, `src/storage/s3_client.py` |
+| `src/services/portal_submission.py` | JWT-based query submission, Pydantic validation, ID generation, idempotency, SQS publishing | `src/db/connection/`, `src/queues/sqs.py` |
+| `src/orchestration/graph.py` | LangGraph workflow graph: context loading, agent routing, parallel KB+routing, confidence branching, Path A/B/C dispatch | All `src/orchestration/nodes/`, `src/adapters/` |
+| `src/orchestration/nodes/query_analysis.py` | LLM Call #1: intent classification, entity extraction, confidence scoring, sentiment analysis | `src/adapters/bedrock.py`, `src/db/connection/` |
+| `src/orchestration/nodes/routing.py` | Deterministic rules engine: confidence, urgency, team assignment, SLA calculation | `src/db/connection/` |
+| `src/orchestration/nodes/kb_search.py` | Embedding + cosine similarity search over pgvector (memory.embedding_index), category-filtered | `src/adapters/bedrock.py`, `src/db/connection/` |
+| `src/orchestration/nodes/resolution.py` | LLM Call #2: draft resolution email from KB facts + vendor context | `src/adapters/bedrock.py` |
+| `src/orchestration/nodes/acknowledgment.py` | LLM Call: draft acknowledgment email (Path B) or resolution email from human notes (Step 15) | `src/adapters/bedrock.py` |
+| `src/orchestration/nodes/quality_gate.py` | 7-check validation: ticket format (INC-XXXXXXX), SLA wording, required sections (greeting, body, next steps, closing), restricted terms, length (50–500 words), source citations, PII scan | Rule engine, Amazon Comprehend |
+| `src/orchestration/nodes/delivery.py` | ServiceNow ticket creation + MS Graph email delivery | `src/adapters/servicenow/`, `src/adapters/graph_api/` |
 
 ---
 
@@ -918,7 +980,7 @@ vqms-data-store/
 └── archive/VQ-YYYY-NNNN/_archive_bundle.json
 ```
 
-S3 keys are built exclusively via `src/config/s3_paths.py` → `build_s3_key(prefix, query_id, filename)`. No hardcoded S3 paths anywhere else.
+S3 keys are built exclusively via `config/s3_paths.py` → `build_s3_key(prefix, query_id, filename)`. No hardcoded S3 paths anywhere else.
 
 ### Vector Search via pgvector
 KB article embeddings are stored in the `memory.embedding_index` table using the pgvector extension. The KB Search node embeds the query text via Titan Embed v2 (1536 dimensions), then runs a cosine similarity query filtered by category. This keeps all vector operations inside PostgreSQL without requiring a separate vector database.
@@ -927,7 +989,7 @@ KB article embeddings are stored in the `memory.embedding_index` table using the
 
 ## Integration Strategy
 
-All external integrations are built behind connector interfaces in `src/connectors/` so they can be stubbed during testing:
+All external integrations are built behind adapter interfaces in `src/adapters/` so they can be stubbed during testing:
 
 **Integration Priority Order (connect in this sequence):**
 1. PostgreSQL — foundation for everything; connect first via SSH tunnel to bastion
@@ -942,11 +1004,11 @@ All external integrations are built behind connector interfaces in `src/connecto
 
 **Connector Details:**
 
-1. **Salesforce CRM Connector** (`src/connectors/salesforce.py`) — Vendor lookup by vendor_id, contact matching by email, fuzzy name match. Used in Steps E2.5 and 7.3.
-2. **ServiceNow ITSM Connector** (`src/connectors/servicenow.py`) — Ticket creation (POST /api/now/table/incident), status updates, work note reads. Used in Steps 12A, 12B, 14, 15.
-3. **Microsoft Graph API Connector** (`src/connectors/graph_api.py`) — Webhook subscription for email detection, message fetch (GET /messages/{id}), email sending (/sendMail). Used in Steps E2.1, 12A, 12B, 15, and closure detection.
-4. **Amazon Bedrock Connector** (`src/connectors/bedrock.py`) — LLM inference (Claude Sonnet 3.5) and embedding (Titan Embed v2). Used in Steps 8, 9B, 10A, 10B, 15.
-5. **PostgreSQL Connector** (`src/connectors/postgres.py`) — All database operations, idempotency checks (INSERT ON CONFLICT), and short-lived caching with TTL-based cleanup. Used in Steps E2.1, P6.4, 7.2, 7.3, and throughout.
+1. **Salesforce CRM Adapter** (`src/adapters/salesforce/`) — Folder module: `client.py` (auth, session), `vendor_lookup.py` (vendor search), `account_operations.py` (account CRUD). Combined via `SalesforceAdapter`. Used in Steps E2.5 and 7.3.
+2. **ServiceNow ITSM Adapter** (`src/adapters/servicenow/`) — Folder module: `client.py` (httpx client), `ticket_create.py` (incident creation), `ticket_query.py` (lookup, work notes, status). Combined via `ServiceNowConnector`. Used in Steps 12A, 12B, 14, 15.
+3. **Microsoft Graph API Adapter** (`src/adapters/graph_api/`) — Folder module: `client.py` (MSAL auth), `email_fetch.py` (GET /messages), `email_send.py` (/sendMail), `webhook.py` (subscription). Combined via `GraphAPIConnector`. Used in Steps E2.1, 12A, 12B, 15, and closure detection.
+4. **Amazon Bedrock Adapter** (`src/adapters/bedrock.py`) — LLM inference (Claude Sonnet 3.5) and embedding (Titan Embed v2). Used in Steps 8, 9B, 10A, 10B, 15.
+5. **PostgreSQL Connector** (`src/db/connection/`) — Folder module: `client.py` (SSH tunnel, asyncpg pool), `queries.py` (execute, fetch, idempotency, cache), `health.py` (health check, migrations). Combined via `PostgresConnector`. Used in Steps E2.1, P6.4, 7.2, 7.3, and throughout.
 
 **Build stubs first.** Each connector should have a corresponding mock/stub that returns realistic test data, allowing the full pipeline to be exercised end-to-end locally before connecting real services.
 
@@ -1012,7 +1074,7 @@ Pydantic models enforce validation at every boundary:
 - **Timezone:** All timestamps use IST (Indian Standard Time) via `src/utils/helpers.py` → `ist_now()`. PostgreSQL TIMESTAMP columns store naive datetimes in IST.
 - JSON structured logging with fields: `correlation_id`, `step_name`, `duration_ms`, `status`, `error_details`, `tokens_in/out`, `cost`, `model`, `prompt_id`
 - Never log PII or secrets
-- **Four logging decorators** (defined in `src/utils/decorators.py`) eliminate boilerplate:
+- **Four logging decorators** (defined in `src/utils/decorators/`) eliminate boilerplate:
   - `@log_api_call` — FastAPI route handlers (extracts correlation_id from headers)
   - `@log_service_call` — services, adapters, orchestration nodes (handles both sync and async)
   - `@log_llm_call` — LLM factory functions (enriches with token counts, cost, model info)
@@ -1052,12 +1114,12 @@ Follow this exact phase order. Do NOT skip phases or build out of sequence. Each
 
 **What to Build:**
 - Project scaffolding: full folder structure under src/ (models/, intake/, pipeline/nodes/, pipeline/prompts/, connectors/, config/, utils/, db/migrations/) plus tests/, docs/
-- Configuration module (`src/config/settings.py`): pydantic-settings BaseSettings loading from .env, all configurable thresholds
-- Utility modules: `src/utils/helpers.py` (ist_now, generate_query_id, generate_correlation_id), `src/utils/logging_setup.py` (structlog config), `src/utils/exceptions.py` (domain exceptions), `src/utils/decorators.py` (4 logging decorators)
+- Configuration module (`config/settings.py`): pydantic-settings BaseSettings loading from .env, all configurable thresholds
+- Utility modules: `src/utils/helpers.py` (ist_now, generate_query_id, generate_correlation_id), `src/utils/logger.py` (structlog config), `src/utils/exceptions.py` (domain exceptions), `src/utils/decorators/` (4 logging decorators)
 - All Pydantic models in `src/models/` (ParsedEmailPayload, QuerySubmission, AnalysisResult, DraftResponse, QualityGateResult, TriagePackage, ReviewerDecision, RoutingDecision, SLATarget, KBArticleMatch, KBSearchResult, TicketCreateRequest, TicketInfo, EpisodicMemoryEntry, VendorContext, PipelineState TypedDict)
 - PostgreSQL schema (intake, workflow, audit, memory, reporting, cache namespaces)
 - Database migration files in `src/db/migrations/` (include pgvector extension, memory.embedding_index with vector(1536))
-- PostgreSQL connector (`src/connectors/postgres.py`): SSH tunnel management, connection pool, CRUD helpers, idempotency check, cache read/write with expires_at
+- PostgreSQL connector (`src/db/connection/`): folder module with `client.py` (SSH tunnel, asyncpg pool), `queries.py` (CRUD helpers, idempotency check, cache read/write with expires_at), `health.py` (health check, migrations)
 - FastAPI project structure with health check endpoint
 - `.env` configuration
 
@@ -1080,7 +1142,7 @@ Follow this exact phase order. Do NOT skip phases or build out of sequence. Each
 **Entry Criteria:** Phase 2 gate passed. Both intake paths working, messages arriving in SQS. Bedrock model access confirmed (Claude Sonnet 3.5 and Titan Embed v2).
 
 **What to Build:**
-- (A) LangGraph graph (`src/pipeline/graph.py`) with SQS consumer, context loading node (Step 7)
+- (A) LangGraph graph (`src/orchestration/graph.py`) with SQS consumer (`src/orchestration/sqs_consumer.py`), context loading node (Step 7)
 - (B) Query Analysis node (Step 8: prompt template → Bedrock Claude → parse AnalysisResult → confidence branching at 0.85)
 - (C) Routing node (Step 9A: deterministic rules engine)
 - (D) KB Search node (Step 9B: embed query → cosine similarity on pgvector in PostgreSQL)
@@ -1593,12 +1655,12 @@ Before declaring the system complete, verify every item below:
 - Do not start with UI or dashboards — the value is in the backend pipeline
 - Do not tightly couple orchestration with integrations — components communicate through clean interfaces
 - Do not mix parsing logic with business logic — email parsing is mechanical, business decisions happen in pipeline nodes
-- Do not call Bedrock directly from every module — all LLM calls AND embedding calls go through `src/connectors/bedrock.py`
+- Do not call Bedrock directly from every module — all LLM calls AND embedding calls go through `src/adapters/bedrock.py` or `src/adapters/llm_gateway.py`
 - Do not create a ticket before thread correlation is checked — always check for existing tickets first
 - Do not skip idempotency — every external write must be idempotent (PostgreSQL INSERT ON CONFLICT, check-before-create)
 - Do not build every branch before one happy path works — get new-email-to-acknowledgment working first
 - Do not leave audit logging until later — every side-effect writes to audit.action_log from day one
-- Do not hardcode prompts across files — versioned templates in `src/pipeline/prompts/` loaded by Bedrock connector
+- Do not hardcode prompts across files — versioned templates in `src/orchestration/prompts/` loaded by the prompt manager
 - Do not forget dead letter queue handling — every SQS queue has vqms-dlq as its DLQ
 - Do not write local/mock fallback code in connectors — all connectors connect to real cloud services; use `moto` for tests only
 - Do not write boto3 resource creation calls — infra is pre-provisioned by the DevOps team
@@ -1660,7 +1722,7 @@ Before declaring the system complete, verify every item below:
 ### Assumptions
 - The confidence threshold of 0.85 for Path A/B vs Path C is a **configurable parameter**, not hardcoded
 - KB articles are pre-embedded and stored in PostgreSQL via pgvector (`memory.embedding_index`). The embedding pipeline is outside scope of this plan
-- Prompt templates (query-analysis, resolution, acknowledgment) are pre-authored and versioned in `src/pipeline/prompts/`
+- Prompt templates (query-analysis, resolution, acknowledgment) are pre-authored and versioned in `src/orchestration/prompts/`
 - The 7-check Quality Gate rules are defined in **configuration**, not hardcoded
 - SLA tiers and escalation thresholds are loaded from **configuration** (Silver + High = 4 hours)
 - The Angular frontend communicates only through the FastAPI REST API — no direct database or AWS access from the browser
@@ -1673,7 +1735,7 @@ Before declaring the system complete, verify every item below:
 - **5-Layer Architecture:** Models → Intake → Pipeline → Connectors → Supporting Files. Every piece of code belongs to one of these layers.
 - **Standards for Naming, Not Complexity:** Follow the coding standards for naming conventions, project structure, and documentation. Skip the advanced patterns (circuit breakers, token buckets, full OpenTelemetry) until production mode.
 - **Architecture Aligned:** Every pipeline node, connector, integration, queue, event, and flow must trace back to the VQMS architecture doc and solution flow doc.
-- **Two Entry Points, One Pipeline:** Email and Portal paths produce different payloads on different queues but converge into the same unified AI pipeline at the LangGraph Orchestrator (`src/pipeline/graph.py`). Code must handle both origins cleanly.
+- **Two Entry Points, One Pipeline:** Email and Portal paths produce different payloads on different queues but converge into the same unified AI pipeline at the LangGraph Orchestrator (`src/orchestration/graph.py`). Code must handle both origins cleanly.
 - **Three Paths Are First-Class:** Path A (AI-Resolved), Path B (Human-Team-Resolved), and Path C (Low-Confidence) are not edge cases — they are core system behavior. Every component from routing to communication drafting to SLA monitoring must be path-aware.
 - **Bottom-Up Build:** Models → connectors → intake → pipeline nodes → orchestration. Never top-down.
 - **Simplicity First:** Make every change as simple as possible. Minimal code impact.

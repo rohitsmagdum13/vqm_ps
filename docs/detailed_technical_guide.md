@@ -7,7 +7,7 @@ Each section has two parts:
 - **Technical Details** — for developers (you)
 - **How to Explain to Your Manager** — in 2-3 simple sentences
 
-Last updated: 2026-04-14
+Last updated: 2026-04-16
 
 ---
 
@@ -16,18 +16,19 @@ Last updated: 2026-04-14
 1. Email Ingestion Service (10 steps, every function)
 2. Portal Intake Service (6 steps)
 3. Query Analysis Agent (8-layer defense, LLM call)
-4. AI Pipeline — Full Step-by-Step
+4. AI Pipeline — Full Step-by-Step (Steps 7–12, all 3 paths)
 5. Database Schema — Every Table, Every Column, Why
 6. Why SQS, EventBridge, and LangGraph (not Step Functions)
 7. Code Trigger Map — Which File, Which Class, Which Function
 8. Authentication System — End-to-End (Login, JWT, Middleware, Logout, Refresh)
+9. API Documentation — Complete Endpoint Reference (14 endpoints)
 
 ---
 
 ## 1. EMAIL INGESTION SERVICE
 
 ```
-  FILE:   src/services/email_intake.py
+  FILE:   src/services/email_intake/ (folder module)
   CLASS:  EmailIntakeService
   ENTRY:  process_email(message_id, correlation_id) -> ParsedEmailPayload
 ```
@@ -77,7 +78,7 @@ Last updated: 2026-04-14
   |    found", both INSERT. ON CONFLICT is atomic — only one wins.    |
   |                                                                   |
   |  CODE:                                                            |
-  |    db/connection.py -> PostgresConnector.check_idempotency()      |
+  |    db/connection/ -> PostgresConnector.check_idempotency()      |
   |    Returns: True (new) or False (duplicate)                       |
   |                                                                   |
   |  CLASSIFICATION: CRITICAL                                         |
@@ -111,9 +112,9 @@ Last updated: 2026-04-14
   |    login needed.                                                  |
   |                                                                   |
   |  CODE:                                                            |
-  |    adapters/graph_api.py -> GraphAPIConnector.fetch_email()       |
-  |    adapters/graph_api.py -> GraphAPIConnector._acquire_token()    |
-  |    adapters/graph_api.py -> GraphAPIConnector._request()          |
+  |    adapters/graph_api/ -> GraphAPIConnector.fetch_email()       |
+  |    adapters/graph_api/ -> GraphAPIConnector._acquire_token()    |
+  |    adapters/graph_api/ -> GraphAPIConnector._request()          |
   |                                                                   |
   |  CLASSIFICATION: CRITICAL                                         |
   +===================================================================+
@@ -139,8 +140,8 @@ Last updated: 2026-04-14
   |    We keep body_html too (stored in S3 for debugging).            |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _parse_email_fields(raw_email)     |
-  |    services/email_intake.py -> _html_to_text(html)               |
+  |    services/email_intake/ -> _parse_email_fields(raw_email)     |
+  |    services/email_intake/ -> _html_to_text(html)               |
   |                                                                   |
   |  CLASSIFICATION: CRITICAL                                         |
   +===================================================================+
@@ -197,7 +198,7 @@ Last updated: 2026-04-14
   |       original email. Also needed for audit compliance.           |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _store_raw_email()                 |
+  |    services/email_intake/ -> _store_raw_email()                 |
   |    storage/s3_client.py -> S3Connector.upload_file()              |
   |    config/s3_paths.py -> build_s3_key()                           |
   |                                                                   |
@@ -248,11 +249,11 @@ Last updated: 2026-04-14
   |       Lists all attachments with s3_keys and extraction status    |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _process_attachments()             |
-  |    services/email_intake.py -> _extract_text()                    |
-  |    services/email_intake.py -> _extract_pdf_text()                |
-  |    services/email_intake.py -> _extract_excel_text()              |
-  |    services/email_intake.py -> _extract_docx_text()               |
+  |    services/email_intake/ -> _process_attachments()             |
+  |    services/email_intake/ -> _extract_text()                    |
+  |    services/email_intake/ -> _extract_pdf_text()                |
+  |    services/email_intake/ -> _extract_excel_text()              |
+  |    services/email_intake/ -> _extract_docx_text()               |
   |    services/attachment_manifest.py -> AttachmentManifestBuilder    |
   |                                                                   |
   |  CLASSIFICATION: NON-CRITICAL                                     |
@@ -298,10 +299,10 @@ Last updated: 2026-04-14
   |     analyze the query anyway, just without vendor history)        |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _identify_vendor()                  |
-  |    adapters/salesforce.py -> SalesforceConnector.identify_vendor() |
-  |    adapters/salesforce.py -> find_vendor_by_email()                |
-  |    adapters/salesforce.py -> fuzzy_name_match()                    |
+  |    services/email_intake/ -> _identify_vendor()                  |
+  |    adapters/salesforce/ -> SalesforceConnector.identify_vendor() |
+  |    adapters/salesforce/ -> find_vendor_by_email()                |
+  |    adapters/salesforce/ -> fuzzy_name_match()                    |
   |                                                                   |
   |  CLASSIFICATION: NON-CRITICAL                                     |
   +===================================================================+
@@ -329,7 +330,7 @@ Last updated: 2026-04-14
   |       update that case — not create a brand new one.              |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _determine_thread_status()          |
+  |    services/email_intake/ -> _determine_thread_status()          |
   |                                                                   |
   |  CLASSIFICATION: NON-CRITICAL (defaults to "NEW")                 |
   +===================================================================+
@@ -356,10 +357,10 @@ Last updated: 2026-04-14
   |     status="RECEIVED", vendor_id                                 |
   |                                                                   |
   |  CODE:                                                            |
-  |    services/email_intake.py -> _store_email_metadata()            |
-  |    services/email_intake.py -> _store_attachment_metadata()       |
-  |    services/email_intake.py -> _create_case_execution()           |
-  |    db/connection.py -> PostgresConnector.execute()                |
+  |    services/email_intake/ -> _store_email_metadata()            |
+  |    services/email_intake/ -> _store_attachment_metadata()       |
+  |    services/email_intake/ -> _create_case_execution()           |
+  |    db/connection/ -> PostgresConnector.execute()                |
   |                                                                   |
   |  CLASSIFICATION: CRITICAL                                         |
   +===================================================================+
@@ -1211,9 +1212,9 @@ Last updated: 2026-04-14
   | WRITES TO STATE: vendor_context, status                            |
   |                                                                    |
   | CALLS:                                                             |
-  |   db/connection.py  -> cache_read("cache.vendor_cache", ...)       |
-  |   adapters/salesforce.py -> find_vendor_by_id(vendor_id)           |
-  |   db/connection.py  -> fetch("SELECT FROM memory.episodic_memory") |
+  |   db/connection/  -> cache_read("cache.vendor_cache", ...)         |
+  |   adapters/salesforce/ -> find_vendor_by_id(vendor_id)           |
+  |   db/connection/  -> fetch("SELECT FROM memory.episodic_memory")   |
   +====================================================================+
        |
        v
@@ -1268,26 +1269,83 @@ Last updated: 2026-04-14
   | CLASS: RoutingNode                                                 |
   | METHOD: execute(state) -> state update                             |
   |                                                                    |
-  | TEAM ASSIGNMENT RULES:                                             |
-  |   Category from AI analysis -> Team                                |
-  |   billing/invoice/payment   -> "finance-ops"                       |
-  |   delivery/shipping         -> "supply-chain"                      |
-  |   contract/legal            -> "legal-compliance"                  |
-  |   technical/api             -> "tech-support"                      |
-  |   everything else           -> "general-support"                   |
+  | TEAM ASSIGNMENT — TWO-LEVEL LOOKUP:                                |
+  |                                                                    |
+  |   LEVEL 1: Exact match on official query type (12 types)           |
+  |   Defined in: models/query.py -> QUERY_TYPE_TEAM_MAP               |
+  |                                                                    |
+  |     RETURN_REFUND       -> "finance-ops"                           |
+  |     GENERAL_INQUIRY     -> "general-support"                       |
+  |     CATALOG_PRICING     -> "procurement"                           |
+  |     CONTRACT_QUERY      -> "legal-compliance"                      |
+  |     PURCHASE_ORDER      -> "procurement"                           |
+  |     SLA_BREACH_REPORT   -> "sla-compliance"                        |
+  |     DELIVERY_SHIPMENT   -> "supply-chain"                          |
+  |     INVOICE_PAYMENT     -> "finance-ops"                           |
+  |     COMPLIANCE_AUDIT    -> "legal-compliance"                      |
+  |     TECHNICAL_SUPPORT   -> "tech-support"                          |
+  |     ONBOARDING          -> "vendor-management"                     |
+  |     QUALITY_ISSUE       -> "quality-assurance"                     |
+  |                                                                    |
+  |   LEVEL 2: Keyword fallback (if Level 1 misses)                    |
+  |   Defined in: orchestration/nodes/routing.py -> CATEGORY_TEAM_MAP  |
+  |                                                                    |
+  |     billing/invoice/payment/return/refund -> "finance-ops"         |
+  |     delivery/shipping/logistics/shipment  -> "supply-chain"        |
+  |     contract/agreement/terms/legal/       -> "legal-compliance"    |
+  |       compliance/audit                                             |
+  |     technical/integration/api/product     -> "tech-support"        |
+  |     catalog/pricing/purchase              -> "procurement"         |
+  |     onboarding                            -> "vendor-management"   |
+  |     quality/defect                        -> "quality-assurance"   |
+  |     sla                                   -> "sla-compliance"      |
+  |     (no match)                            -> "general-support"     |
+  |                                                                    |
+  |   CODE (routing.py line 119-122):                                  |
+  |     assigned_team = QUERY_TYPE_TEAM_MAP.get(                       |
+  |         suggested_category.upper(),           # try Level 1        |
+  |         CATEGORY_TEAM_MAP.get(                                     |
+  |             suggested_category.lower(),        # try Level 2       |
+  |             DEFAULT_TEAM))                     # fallback           |
   |                                                                    |
   | SLA CALCULATION:                                                   |
-  |   Base hours by vendor tier:                                       |
+  |   Formula: SLA Hours = max(1, floor(Base × Multiplier))            |
+  |                                                                    |
+  |   Base hours by vendor tier (TIER_SLA_HOURS):                      |
   |     PLATINUM=4h, GOLD=8h, SILVER=16h, BRONZE=24h                  |
   |                                                                    |
-  |   Multiplied by urgency:                                           |
+  |   Multiplied by urgency (URGENCY_MULTIPLIER):                      |
   |     CRITICAL=0.25x, HIGH=0.5x, MEDIUM=1.0x, LOW=1.5x             |
   |                                                                    |
-  |   Example: SILVER vendor + HIGH urgency = 16 * 0.5 = 8 hours      |
-  |   Example: GOLD vendor + CRITICAL = 8 * 0.25 = 2 hours            |
+  |   FULL SLA MATRIX (hours):                                         |
+  |   +----------+----------+------+--------+------+                   |
+  |   | Tier     | CRITICAL | HIGH | MEDIUM | LOW  |                   |
+  |   +----------+----------+------+--------+------+                   |
+  |   | PLATINUM |    1     |  2   |   4    |  6   |                   |
+  |   | GOLD     |    2     |  4   |   8    | 12   |                   |
+  |   | SILVER   |    4     |  8   |  16    | 24   |                   |
+  |   | BRONZE   |    6     | 12   |  24    | 36   |                   |
+  |   +----------+----------+------+--------+------+                   |
+  |                                                                    |
+  |   Example: SILVER + HIGH = 16 × 0.5 = 8 hours                     |
+  |   Example: GOLD + CRITICAL = 8 × 0.25 = 2 hours                   |
+  |   Example: PLATINUM + CRITICAL = 4 × 0.25 = 1 hour (min=1)        |
+  |                                                                    |
+  | SLA ESCALATION THRESHOLDS:                                         |
+  |   Warning     at 70% of SLA hours  (env: SLA_WARNING_THRESHOLD_PERCENT)     |
+  |   L1 Escalate at 85% of SLA hours  (env: SLA_L1_ESCALATION_THRESHOLD_PERCENT)|
+  |   L2 Escalate at 95% of SLA hours  (env: SLA_L2_ESCALATION_THRESHOLD_PERCENT)|
+  |                                                                    |
+  |   Worked example (GOLD + HIGH = 4 hours):                          |
+  |     Warning:  4 × 0.70 = 2.8 hours -> after 2h 48m                |
+  |     L1:       4 × 0.85 = 3.4 hours -> after 3h 24m                |
+  |     L2:       4 × 0.95 = 3.8 hours -> after 3h 48m                |
   |                                                                    |
   | WRITES TO STATE: routing_decision (RoutingDecision as dict)        |
-  |   { assigned_team, sla_hours, category, priority, routing_reason } |
+  |   { assigned_team, sla_target: {total_hours,                       |
+  |     warning_at_percent, l1_escalation_at_percent,                  |
+  |     l2_escalation_at_percent},                                     |
+  |     category, priority, routing_reason }                           |
   +====================================================================+
        |
        v
@@ -1328,7 +1386,7 @@ Last updated: 2026-04-14
   |                                                                    |
   | CALLS:                                                             |
   |   adapters/llm_gateway.py -> llm_embed(search_text)               |
-  |   db/connection.py -> fetch(pgvector_similarity_query)             |
+  |   db/connection/ -> fetch(pgvector_similarity_query)             |
   +====================================================================+
        |
        v
@@ -1361,29 +1419,241 @@ Last updated: 2026-04-14
     PATH A                         PATH B
        |                              |
        v                              v
-  +------------------+     +----------------------+
-  | RESOLUTION       |     | ACKNOWLEDGMENT       |
-  | [Phase 4 stub]   |     | [Phase 4 stub]       |
-  | AI drafts full   |     | AI drafts "we got    |
-  | answer from KB   |     | your email" + ticket |
-  +--------+---------+     +----------+-----------+
+  +====================================================================+
+  | STEP 10A: RESOLUTION (Path A only — AI drafts full answer)        |
+  |                                                                    |
+  | FILE:  orchestration/nodes/resolution.py                           |
+  | CLASS: ResolutionNode                                              |
+  | METHOD: execute(state) -> state update                             |
+  |                                                                    |
+  | WHAT IT DOES:                                                      |
+  |   LLM Call #2 — generates a FULL RESOLUTION email using KB         |
+  |   articles as the source of facts. This is the "happy path"        |
+  |   where the AI found a good answer in the knowledge base.          |
+  |                                                                    |
+  | HOW IT WORKS:                                                      |
+  |   1. Gather from state:                                            |
+  |      - subject, body (the vendor's question)                       |
+  |      - analysis_result (from Step 8)                               |
+  |      - kb_search_result (from Step 9B — the KB articles)           |
+  |      - routing_decision (from Step 9A — team, SLA)                 |
+  |      - vendor_context (tier, history)                              |
+  |                                                                    |
+  |   2. Format KB articles into a readable block:                     |
+  |      _format_kb_articles(matches) -> string                        |
+  |      "Article 1: <title> (score: 0.92)\n<content>\n..."           |
+  |                                                                    |
+  |   3. Look up SLA statement by vendor tier:                         |
+  |      SLA_STATEMENTS = {                                            |
+  |        "PLATINUM": "4 hours",                                      |
+  |        "GOLD": "8 hours",                                          |
+  |        "SILVER": "16 hours",                                       |
+  |        "BRONZE": "24 hours",                                       |
+  |      }                                                             |
+  |                                                                    |
+  |   4. Render prompt template:                                       |
+  |      orchestration/prompts/resolution_v1.j2                        |
+  |      (includes: query, KB articles, vendor context, SLA)           |
+  |                                                                    |
+  |   5. Call LLM via adapters/llm_gateway.py -> llm_complete()        |
+  |      temperature=0.3 (slightly creative for natural language)      |
+  |      max_tokens=4096                                               |
+  |                                                                    |
+  |   6. Parse JSON from LLM response:                                 |
+  |      _parse_json_from_response(raw_text) -> dict                   |
+  |      Handles markdown fences, preamble text, etc.                  |
+  |                                                                    |
+  |   7. Build draft_response dict:                                    |
+  |      {                                                             |
+  |        "draft_type": "RESOLUTION",                                 |
+  |        "subject": "Re: <original subject>",                        |
+  |        "body": "<full answer with facts from KB>",                 |
+  |        "confidence": 0.92,                                         |
+  |        "sources": ["KB Article Title 1", "KB Article Title 2"],    |
+  |        "ticket_number": "PENDING"  (replaced by Delivery node)     |
+  |      }                                                             |
+  |                                                                    |
+  | IF LLM CALL FAILS:                                                 |
+  |   Returns a safe fallback draft with low confidence                |
+  |   that will route to human review via Quality Gate                 |
+  |                                                                    |
+  | WRITES TO STATE: draft_response, status="QUALITY_CHECK"            |
+  |                                                                    |
+  | CALLS:                                                             |
+  |   orchestration/prompts/prompt_manager.py -> render()              |
+  |   adapters/llm_gateway.py -> llm_complete()                        |
+  |     -> adapters/bedrock.py -> llm_complete()                       |
+  +====================================================================+
+           |
+           |                              |
+           |     +====================================================================+
+           |     | STEP 10B: ACKNOWLEDGMENT (Path B only — confirms receipt)          |
+           |     |                                                                    |
+           |     | FILE:  orchestration/nodes/acknowledgment.py                       |
+           |     | CLASS: AcknowledgmentNode                                          |
+           |     | METHOD: execute(state) -> state update                             |
+           |     |                                                                    |
+           |     | WHAT IT DOES:                                                      |
+           |     |   LLM Call #2 — generates an ACKNOWLEDGMENT-ONLY email.            |
+           |     |   This NEVER answers the vendor's question.                        |
+           |     |   It just says: "We got your email, ticket is INC-XXXXXXX,         |
+           |     |   our team is reviewing, SLA is X hours."                          |
+           |     |                                                                    |
+           |     | CRITICAL DIFFERENCE FROM RESOLUTION:                               |
+           |     |   Resolution = "Here is the answer to your question"               |
+           |     |   Acknowledgment = "We received your question, team is on it"      |
+           |     |                                                                    |
+           |     | HOW IT WORKS:                                                      |
+           |     |   Same 7-step pattern as ResolutionNode but:                       |
+           |     |   - Uses acknowledgment_v1.j2 prompt template                     |
+           |     |   - Prompt explicitly says "DO NOT answer the question"            |
+           |     |   - draft_type = "ACKNOWLEDGMENT"                                  |
+           |     |   - sources = [] (always empty — no KB articles used)              |
+           |     |                                                                    |
+           |     | OUTPUT:                                                            |
+           |     |   {                                                                |
+           |     |     "draft_type": "ACKNOWLEDGMENT",                                |
+           |     |     "subject": "Re: <original subject>",                           |
+           |     |     "body": "Dear <vendor>, we received your query...",             |
+           |     |     "confidence": 0.88,                                            |
+           |     |     "sources": [],                                                 |
+           |     |     "ticket_number": "PENDING"                                     |
+           |     |   }                                                                |
+           |     |                                                                    |
+           |     | WRITES TO STATE: draft_response, status="QUALITY_CHECK"            |
+           |     |                                                                    |
+           |     | CALLS:                                                             |
+           |     |   orchestration/prompts/prompt_manager.py -> render()              |
+           |     |   adapters/llm_gateway.py -> llm_complete()                        |
+           |     |     -> adapters/bedrock.py -> llm_complete()                       |
+           |     +====================================================================+
            |                           |
            +-------------+------------+
                          |
                          v
   +====================================================================+
-  | STEP 11: QUALITY GATE [Phase 4 stub]                              |
-  | 7 checks on the drafted email before sending                       |
+  | STEP 11: QUALITY GATE (7 deterministic checks on every draft)     |
+  |                                                                    |
+  | FILE:  orchestration/nodes/quality_gate.py                         |
+  | CLASS: QualityGateNode                                             |
+  | METHOD: execute(state) -> state update                             |
+  |                                                                    |
+  | WHAT IT DOES:                                                      |
+  |   Runs 7 validation checks on EVERY outbound email draft           |
+  |   before it can be sent to the vendor. Both Path A and Path B      |
+  |   drafts must pass all 7 checks.                                   |
+  |                                                                    |
+  | THE 7 CHECKS:                                                      |
+  |                                                                    |
+  |   CHECK 1: TICKET NUMBER FORMAT                                    |
+  |   _check_ticket_number(body)                                       |
+  |   Regex: r"INC-\d{7}" or "PENDING"                                |
+  |   Must contain a valid ticket reference in the draft body          |
+  |                                                                    |
+  |   CHECK 2: SLA WORDING                                             |
+  |   _check_sla_wording(body, vendor_tier)                            |
+  |   Draft must mention the correct SLA timeframe matching            |
+  |   the vendor's tier (e.g., PLATINUM vendor = "4 hours")            |
+  |   Uses SLA_STATEMENTS dict (same as Resolution/Ack nodes)          |
+  |                                                                    |
+  |   CHECK 3: REQUIRED SECTIONS                                       |
+  |   _check_required_sections(body)                                   |
+  |   Every email must have these 4 sections:                          |
+  |     - Greeting (Dear/Hello/Hi)                                     |
+  |     - Body (actual content)                                        |
+  |     - Next steps section                                           |
+  |     - Closing (Regards/Best/Thank)                                 |
+  |                                                                    |
+  |   CHECK 4: RESTRICTED TERMS                                        |
+  |   _check_restricted_terms(body)                                    |
+  |   Scans for 13 banned terms that should never appear:              |
+  |   "internal only", "confidential", "do not share",                |
+  |   "todo", "fixme", "hack", "workaround", "placeholder",          |
+  |   "test data", "dummy", "fake", "mock", "debug"                   |
+  |                                                                    |
+  |   CHECK 5: WORD COUNT                                              |
+  |   MIN_WORD_COUNT = 50, MAX_WORD_COUNT = 500                        |
+  |   Too short = not enough information                               |
+  |   Too long = vendor won't read it                                  |
+  |                                                                    |
+  |   CHECK 6: SOURCE CITATIONS (Path A only)                          |
+  |   If draft_type == "RESOLUTION":                                   |
+  |     sources list must not be empty                                 |
+  |     (Path A claims to answer the question — must cite KB sources)  |
+  |   If draft_type == "ACKNOWLEDGMENT":                               |
+  |     This check is SKIPPED (Path B has no sources)                  |
+  |                                                                    |
+  |   CHECK 7: PII SCAN (stub — Phase 4)                               |
+  |   _check_pii_stub(body) -> always passes for now                   |
+  |   Will use Amazon Comprehend in production                         |
+  |                                                                    |
+  | SCORING:                                                           |
+  |   TOTAL_CHECKS = 7                                                 |
+  |   Result: { passed: true/false, checks_run: 7,                     |
+  |             checks_passed: N, failed_checks: [...],                |
+  |             redraft_count: 0, max_redrafts: 2 }                    |
+  |                                                                    |
+  | IF CHECKS FAIL:                                                    |
+  |   Up to 2 re-drafts allowed (redraft_count tracks attempts)        |
+  |   After 2 failures -> routes to human review                       |
+  |                                                                    |
+  | WRITES TO STATE: quality_gate_result, status="VALIDATED"           |
   +====================================================================+
                          |
                          v
   +====================================================================+
-  | STEP 12: DELIVERY [Phase 4 stub]                                  |
-  | Create ServiceNow ticket + send email via Graph API                |
+  | STEP 12: DELIVERY (ServiceNow ticket + email send)                |
+  |                                                                    |
+  | FILE:  orchestration/nodes/delivery.py                             |
+  | CLASS: DeliveryNode                                                |
+  | METHOD: execute(state) -> state update                             |
+  |                                                                    |
+  | WHAT IT DOES:                                                      |
+  |   Four-phase execution that creates a real ticket and sends        |
+  |   the validated email to the vendor.                               |
+  |                                                                    |
+  | PHASE 1: CREATE SERVICENOW TICKET                                  |
+  |   _create_ticket(state) -> ticket_number (INC-XXXXXXX)            |
+  |   Calls: adapters/servicenow/ -> ServiceNowAdapter.create_ticket()|
+  |   POST /api/now/table/incident with:                               |
+  |     short_description, description, urgency, impact,               |
+  |     assignment_group (from routing_decision.assigned_team),         |
+  |     caller_id, correlation_id                                      |
+  |   Returns: INC-XXXXXXX number                                      |
+  |                                                                    |
+  | PHASE 2: REPLACE "PENDING" WITH REAL TICKET NUMBER                 |
+  |   In draft_response.body:                                          |
+  |     "PENDING" -> "INC-0012345"                                     |
+  |   (Resolution and Acknowledgment nodes write "PENDING"             |
+  |    as a placeholder — Delivery replaces it with the real number)   |
+  |                                                                    |
+  | PHASE 3: SEND EMAIL VIA GRAPH API                                  |
+  |   _send_email(state, ticket_number) -> bool                        |
+  |   Calls: adapters/graph_api/ -> GraphAPIConnector.send_email()   |
+  |   POST /users/{mailbox}/sendMail with:                             |
+  |     toRecipients, subject, body (HTML), importance                 |
+  |                                                                    |
+  | PHASE 4: SET FINAL STATUS                                          |
+  |   Path A (RESOLUTION):                                             |
+  |     status = "RESOLVED"                                            |
+  |     (ticket created for monitoring, answer already sent)           |
+  |   Path B (ACKNOWLEDGMENT):                                         |
+  |     status = "AWAITING_RESOLUTION"                                 |
+  |     (ticket created for INVESTIGATION, team must solve it)         |
+  |                                                                    |
+  | WRITES TO STATE: ticket_info, delivery_status, status,             |
+  |                  updated_at                                        |
+  |                                                                    |
+  | CALLS:                                                             |
+  |   adapters/servicenow/ -> ServiceNowAdapter.create_ticket()      |
+  |   adapters/graph_api/ -> GraphAPIConnector.send_email()          |
   +====================================================================+
                          |
                          v
                        DONE
+  
+  PATH A end state: RESOLVED       (vendor has answer, team monitors)
+  PATH B end state: AWAITING_RESOLUTION (vendor has ack, team investigates)
 ```
 
 ---
@@ -1398,24 +1668,24 @@ Last updated: 2026-04-14
   1. WEBHOOK (real-time)
      Microsoft sends HTTP POST to our webhook endpoint
      -> api/routes/webhooks.py -> handle_graph_notification()
-        -> services/email_intake.py -> EmailIntakeService.process_email()
+        -> services/email_intake/ -> EmailIntakeService.process_email()
 
   2. POLLING (every 5 minutes, catches missed webhooks)
      -> services/polling.py -> poll_unread_emails()
-        -> adapters/graph_api.py -> list_unread_messages()
-        -> services/email_intake.py -> EmailIntakeService.process_email()
+        -> adapters/graph_api/ -> list_unread_messages()
+        -> services/email_intake/ -> EmailIntakeService.process_email()
 
   3. EMAIL INTAKE (10 steps inside process_email)
-     -> db/connection.py -> check_idempotency()           [Step E2.1]
-     -> adapters/graph_api.py -> fetch_email()             [Step E1]
+     -> db/connection/ -> check_idempotency()           [Step E2.1]
+     -> adapters/graph_api/ -> fetch_email()             [Step E1]
      -> _parse_email_fields()                              [Step E2.2]
      -> utils/helpers.py -> IdGenerator.generate_query_id()[Step E2.7]
      -> storage/s3_client.py -> upload_file()              [Step E2.3]
      -> _process_attachments() -> _extract_text()          [Step E2.4]
-     -> adapters/salesforce.py -> identify_vendor()        [Step E2.5]
+     -> adapters/salesforce/ -> identify_vendor()        [Step E2.5]
      -> _determine_thread_status()                         [Step E2.6]
-     -> db/connection.py -> execute(INSERT email_messages)  [Step E2.8]
-     -> db/connection.py -> execute(INSERT case_execution)  [Step E2.8]
+     -> db/connection/ -> execute(INSERT email_messages)  [Step E2.8]
+     -> db/connection/ -> execute(INSERT case_execution)  [Step E2.8]
      -> events/eventbridge.py -> publish_event("EmailParsed") [Step E2.9]
      -> queues/sqs.py -> send_message(queue, payload)      [Step E2.9]
 
@@ -1426,9 +1696,9 @@ Last updated: 2026-04-14
   5. AI PIPELINE NODES (executed by LangGraph in order)
      -> orchestration/nodes/context_loading.py
             ContextLoadingNode.execute(state)
-              -> db/connection.py -> cache_read()
-              -> adapters/salesforce.py -> find_vendor_by_id()
-              -> db/connection.py -> fetch(episodic_memory)
+              -> db/connection/ -> cache_read()
+              -> adapters/salesforce/ -> find_vendor_by_id()
+              -> db/connection/ -> fetch(episodic_memory)
 
      -> orchestration/nodes/query_analysis.py
             QueryAnalysisNode.execute(state)
@@ -1453,14 +1723,55 @@ Last updated: 2026-04-14
               -> adapters/llm_gateway.py -> llm_embed()
                   -> adapters/bedrock.py -> llm_embed()
                   -> [on fail] adapters/openai_llm.py -> llm_embed()
-              -> db/connection.py -> fetch(pgvector cosine similarity)
+              -> db/connection/ -> fetch(pgvector cosine similarity)
 
      -> orchestration/nodes/path_decision.py
             PathDecisionNode.execute(state)
               -> [if match >= 0.80 AND content >= 100 chars] path="A"
               -> [else] path="B"
 
-     -> [Phase 4 stubs: resolution/acknowledgment/quality_gate/delivery]
+     -> orchestration/nodes/path_decision.py  (conditional edge)
+            route_after_path_decision(state):
+              -> [if path == "A"] go to "resolution"
+              -> [if path == "B"] go to "acknowledgment"
+
+     -> orchestration/nodes/resolution.py  (PATH A ONLY)
+            ResolutionNode.execute(state)
+              -> orchestration/prompts/prompt_manager.py -> render("resolution_v1.j2")
+              -> adapters/llm_gateway.py -> llm_complete(temperature=0.3)
+                  -> adapters/bedrock.py -> llm_complete()
+              -> _parse_json_from_response()
+              -> _format_kb_articles()
+              -> Returns draft_response with draft_type="RESOLUTION"
+
+     -> orchestration/nodes/acknowledgment.py  (PATH B ONLY)
+            AcknowledgmentNode.execute(state)
+              -> orchestration/prompts/prompt_manager.py -> render("acknowledgment_v1.j2")
+              -> adapters/llm_gateway.py -> llm_complete(temperature=0.3)
+                  -> adapters/bedrock.py -> llm_complete()
+              -> _parse_json_from_response()
+              -> Returns draft_response with draft_type="ACKNOWLEDGMENT", sources=[]
+
+     -> orchestration/nodes/quality_gate.py  (BOTH PATHS)
+            QualityGateNode.execute(state)
+              -> _check_ticket_number(body)       [Check 1: INC-XXXXXXX or PENDING]
+              -> _check_sla_wording(body, tier)    [Check 2: correct SLA timeframe]
+              -> _check_required_sections(body)    [Check 3: greeting/body/next/close]
+              -> _check_restricted_terms(body)     [Check 4: 13 banned terms]
+              -> word count check                  [Check 5: 50-500 words]
+              -> source citations check            [Check 6: Path A only]
+              -> _check_pii_stub(body)             [Check 7: PII scan placeholder]
+
+     -> orchestration/nodes/delivery.py  (BOTH PATHS)
+            DeliveryNode.execute(state)
+              -> _create_ticket(state)
+                  -> adapters/servicenow/ -> ServiceNowAdapter.create_ticket()
+              -> replace "PENDING" with "INC-XXXXXXX" in draft body
+              -> _send_email(state, ticket_number)
+                  -> adapters/graph_api/ -> GraphAPIConnector.send_email()
+              -> set final status:
+                  Path A -> "RESOLVED"
+                  Path B -> "AWAITING_RESOLUTION"
 ```
 
 ### Complete Call Chain: Portal Submission
@@ -1478,9 +1789,9 @@ Last updated: 2026-04-14
      -> services/portal_submission.py
             PortalIntakeService.submit_query(submission, vendor_id)
               -> SHA-256 idempotency hash
-              -> db/connection.py -> check_idempotency()
+              -> db/connection/ -> check_idempotency()
               -> utils/helpers.py -> IdGenerator.generate_query_id()
-              -> db/connection.py -> execute(INSERT case_execution)
+              -> db/connection/ -> execute(INSERT case_execution)
               -> events/eventbridge.py -> publish_event("QueryReceived")
               -> queues/sqs.py -> send_message(queue, payload)
               -> return UnifiedQueryPayload
@@ -1498,21 +1809,21 @@ Last updated: 2026-04-14
   | config/settings.py                               |   1   | DONE    |
   | config/s3_paths.py                               |   1   | DONE    |
   | src/models/*.py (all 10 model files)             |   1   | DONE    |
-  | src/db/connection.py                             |   1   | DONE    |
+  | src/db/connection/ (folder module)                |   1   | DONE    |
   | src/db/migrations/*.sql (10 files)               |   1   | DONE    |
   | src/utils/helpers.py                             |   1   | DONE    |
   | src/utils/exceptions.py                          |   1   | DONE    |
-  | src/utils/decorators.py                          |   1   | DONE    |
+  | src/utils/decorators/ (folder module)             |   1   | DONE    |
   | src/utils/logger.py                              |   1   | DONE    |
   | src/cache/cache_client.py                        |   1   | DONE    |
   +--------------------------------------------------+-------+---------+
-  | src/services/email_intake.py                     |   2   | DONE    |
+  | src/services/email_intake/ (folder module)        |   2   | DONE    |
   | src/services/portal_submission.py                |   2   | DONE    |
   | src/services/auth.py                             |   2   | DONE    |
   | src/services/polling.py                          |   2   | DONE    |
   | src/services/attachment_manifest.py              |   2   | DONE    |
-  | src/adapters/graph_api.py                        |   2   | DONE    |
-  | src/adapters/salesforce.py                       |   2   | DONE    |
+  | src/adapters/graph_api/ (folder module)           |   2   | DONE    |
+  | src/adapters/salesforce/ (folder module)          |   2   | DONE    |
   | src/storage/s3_client.py                         |   2   | DONE    |
   | src/queues/sqs.py                                |   2   | DONE    |
   | src/events/eventbridge.py                        |   2   | DONE    |
@@ -1532,15 +1843,23 @@ Last updated: 2026-04-14
   | src/orchestration/prompts/query_analysis_v1.j2   |   3   | DONE    |
   | src/orchestration/prompts/prompt_manager.py      |   3   | DONE    |
   +--------------------------------------------------+-------+---------+
-  | orchestration/nodes/resolution.py                |   4   | STUB    |
-  | orchestration/nodes/acknowledgment.py            |   4   | STUB    |
-  | orchestration/nodes/quality_gate.py              |   4   | STUB    |
-  | orchestration/nodes/delivery.py                  |   4   | STUB    |
-  | adapters/servicenow.py                           |   4   | STUB    |
+  | orchestration/nodes/resolution.py                |   4   | DONE    |
+  | orchestration/nodes/acknowledgment.py            |   4   | DONE    |
+  | orchestration/nodes/quality_gate.py              |   4   | DONE    |
+  | orchestration/nodes/delivery.py                  |   4   | DONE    |
+  | adapters/servicenow/ (folder module)              |   4   | DONE    |
+  | orchestration/prompts/resolution_v1.j2           |   4   | DONE    |
+  | orchestration/prompts/acknowledgment_v1.j2       |   4   | DONE    |
   +--------------------------------------------------+-------+---------+
   | orchestration/nodes/triage.py                    |   5   | PLANNED |
   | SLA monitoring module                            |   6   | PLANNED |
-  | Angular frontend                                 |   7   | PLANNED |
+  +--------------------------------------------------+-------+---------+
+  | frontend/src/app/ (Angular 17+ standalone)       |   7   | DONE    |
+  | frontend/src/app/pages/portal/                   |   7   | DONE    |
+  | frontend/src/app/pages/new-query-type/           |   7   | DONE    |
+  | frontend/src/app/pages/new-query-review/         |   7   | DONE    |
+  | frontend/src/app/pages/query-status/             |   7   | DONE    |
+  | frontend/src/app/services/query.service.ts       |   7   | DONE    |
   +--------------------------------------------------+-------+---------+
 ```
 
@@ -2374,3 +2693,814 @@ Every class name, method name, file path, and SQL query is from the actual codeb
   |     -> CORS tightening (currently allows localhost origins)       |
   +------------------------------------------------------------------+
 ```
+
+---
+
+## 9. API DOCUMENTATION — COMPLETE ENDPOINT REFERENCE
+
+```
+  FILES:
+    api/routes/auth.py               — POST /auth/login, POST /auth/logout
+    api/routes/vendors.py            — GET /vendors, POST /vendors, PUT /vendors/{id}, DELETE /vendors/{id}
+    api/routes/queries.py            — POST /queries, GET /queries/{query_id}
+    api/routes/emails.py             — GET /emails, GET /emails/stats, GET /emails/{qid}, GET .../download
+    api/routes/webhooks.py           — POST /webhooks/ms-graph
+    api/routes/health.py             — GET /health
+    api/middleware/auth_middleware.py — JWT validation on every request
+    services/auth.py                 — Login logic, JWT, blacklist
+    services/portal_submission.py    — Query submission pipeline
+    services/email_dashboard/        — Email listing & stats (folder module)
+    adapters/salesforce/             — Vendor CRUD (Salesforce, folder module)
+    adapters/graph_api/              — Email webhook processing (folder module)
+```
+
+### How to Explain to Your Manager
+
+> "Our system has 14 API endpoints that handle everything: logging in,
+>  managing vendors, submitting queries, viewing emails, and receiving
+>  webhook notifications. Every endpoint is secured with JWT tokens
+>  except health checks and the login page itself. Admin endpoints
+>  (vendor management) require the ADMIN role."
+
+
+### MASTER ENDPOINT TABLE
+
+```
+  +------+---------------------------------------------------+-----------+-----------+------------------+
+  | #    | Endpoint                                          | Auth      | Role      | Purpose          |
+  +------+---------------------------------------------------+-----------+-----------+------------------+
+  |  1   | POST   /auth/login                                | None      | Any       | Get JWT token    |
+  |  2   | POST   /auth/logout                               | Bearer    | Any       | Invalidate token |
+  |  3   | GET    /vendors                                   | Bearer    | ADMIN     | List vendors     |
+  |  4   | POST   /vendors                                   | Bearer    | ADMIN     | Create vendor    |
+  |  5   | PUT    /vendors/{vendor_id}                       | Bearer    | ADMIN     | Update vendor    |
+  |  6   | DELETE /vendors/{vendor_id}                       | Bearer    | ADMIN     | Delete vendor    |
+  |  7   | POST   /queries                                   | Bearer    | Any       | Submit query     |
+  |  8   | GET    /queries/{query_id}                        | Bearer    | Any       | Query status     |
+  |  9   | GET    /emails                                    | Bearer    | Any       | Email list       |
+  | 10   | GET    /emails/stats                              | Bearer    | Any       | Email stats      |
+  | 11   | GET    /emails/{query_id}                         | Bearer    | Any       | Email detail     |
+  | 12   | GET    /emails/{qid}/attachments/{aid}/download   | Bearer    | Any       | Download file    |
+  | 13   | POST   /webhooks/ms-graph                         | None*     | —         | Email webhook    |
+  | 14   | GET    /health                                    | None      | —         | Health check     |
+  +------+---------------------------------------------------+-----------+-----------+------------------+
+
+  * Webhooks use MS Graph validation tokens, not JWT
+  ADMIN = Only users with role "ADMIN" in tbl_user_roles
+  Any   = Any authenticated user (ADMIN, VENDOR, or REVIEWER)
+```
+
+
+### REQUEST FLOW — HOW EVERY API CALL WORKS
+
+```
+  Client (Angular / Swagger / Postman)
+      |
+      |  HTTP Request + Authorization: Bearer <jwt>
+      |
+      v
+  +------------------------------------------------------------------+
+  | FASTAPI APPLICATION                                               |
+  |                                                                   |
+  |  STEP 1: AuthMiddleware.dispatch()                                |
+  |    api/middleware/auth_middleware.py                                |
+  |                                                                   |
+  |    Is path in SKIP_PATHS?                                         |
+  |      /health, /auth/login, /docs, /openapi.json, /redoc,         |
+  |      /webhooks/*                                                  |
+  |        YES -> pass through to route handler                       |
+  |        NO  -> validate JWT token:                                 |
+  |               1. Extract "Bearer <token>" from header             |
+  |               2. Decode JWT (check signature + expiry)            |
+  |               3. Check blacklist (cache.kv_store lookup)          |
+  |               4. Set request.state.user = TokenPayload            |
+  |               5. If token expires in < 5 min:                     |
+  |                  -> create new JWT                                |
+  |                  -> add X-New-Token response header               |
+  |               6. If token invalid/expired/blacklisted:            |
+  |                  -> return 401 Unauthorized                       |
+  |                                                                   |
+  |  STEP 2: Route handler executes                                   |
+  |    (GET /vendors, POST /queries, etc.)                            |
+  |                                                                   |
+  |  STEP 3: Security headers added to response                      |
+  |    Content-Security-Policy, X-Content-Type-Options,               |
+  |    X-XSS-Protection, X-Frame-Options, HSTS,                      |
+  |    Referrer-Policy, Permissions-Policy, Cache-Control             |
+  |                                                                   |
+  +------------------------------------------------------------------+
+```
+
+
+### 9.1 POST /auth/login
+
+```
+  PURPOSE: Authenticate user and get JWT token
+  FILE:    api/routes/auth.py -> login()
+  MODEL:   models/auth.py -> LoginRequest, LoginResponse
+  AUTH:    None (public endpoint)
+
+  REQUEST:
+    POST /auth/login
+    Content-Type: application/json
+    {
+      "username_or_email": "admin_user",
+      "password": "admin123"
+    }
+
+  INTERNAL FLOW:
+    1. Pydantic validates LoginRequest
+    2. services/auth.py -> authenticate_user()
+       a. SELECT from tbl_users (match username OR email)
+       b. Check status == "ACTIVE"
+       c. werkzeug.check_password_hash() (in background thread)
+       d. SELECT role from tbl_user_roles
+       e. Create JWT (sub, role, tenant, exp, iat, jti)
+    3. Return LoginResponse
+
+  SUCCESS (200):
+    {
+      "token": "eyJhbGciOiJIUzI1NiIs...",
+      "user_name": "admin_user",
+      "email": "admin@vqms.local",
+      "role": "ADMIN",
+      "tenant": "hexaware",
+      "vendor_id": null
+    }
+
+  ERRORS:
+    401 "Invalid credentials"      — wrong username or password
+    401 "Account is inactive"      — user status != ACTIVE
+    422 validation error           — missing required fields
+```
+
+
+### 9.2 POST /auth/logout
+
+```
+  PURPOSE: Invalidate current JWT token
+  FILE:    api/routes/auth.py -> logout()
+  AUTH:    Bearer token required
+
+  REQUEST:
+    POST /auth/logout
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    1. Extract token from Authorization header
+    2. Decode JWT to get jti (unique token ID)
+    3. Save to blacklist: cache.kv_store
+       key = "vqms:auth:blacklist:<jti>"
+       TTL = remaining token lifetime
+    4. Return success
+
+  SUCCESS (200):
+    { "message": "Logged out successfully" }
+
+  ERRORS:
+    401 "No token provided"        — missing Authorization header
+    400 decode error               — malformed token
+```
+
+
+### 9.3 GET /vendors
+
+```
+  PURPOSE: List all active vendors from Salesforce
+  FILE:    api/routes/vendors.py -> get_all_vendors()
+  AUTH:    Bearer token, ADMIN role required (403 for VENDOR/REVIEWER)
+
+  REQUEST:
+    GET /vendors
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    1. AuthMiddleware validates JWT
+    2. _require_admin() checks role == "ADMIN"
+    3. adapters/salesforce/ -> get_all_active_vendors()
+       SOQL: SELECT Id, Name, Vendor_ID__c, ...
+             FROM Vendor_Account__c
+             WHERE Vendor_Status__c = 'Active'
+             ORDER BY Vendor_ID__c ASC
+    4. Map Salesforce field names to Python snake_case
+    5. Return list of VendorAccountData objects
+
+  SUCCESS (200):
+    [
+      {
+        "id": "001al00002Ie1zjAAB",
+        "name": "TechNova Solutions",
+        "vendor_id": "V-001",
+        "vendor_tier": "Platinum",
+        "category": "IT Services",
+        "billing_city": "Mumbai",
+        ...
+      }
+    ]
+
+  ERRORS:
+    401 "Not authenticated"        — missing/invalid token
+    403 "Admin access required"    — user is not ADMIN
+    502 "Salesforce query failed"  — Salesforce API down
+```
+
+
+### 9.4 POST /vendors (Create)
+
+```
+  PURPOSE: Create new Vendor_Account__c in Salesforce
+  FILE:    api/routes/vendors.py -> create_vendor()
+  AUTH:    Bearer token, ADMIN role required
+
+  REQUEST:
+    POST /vendors
+    Authorization: Bearer eyJhbG...
+    Content-Type: application/json
+    {
+      "name": "NewVendor Corp",          <-- REQUIRED
+      "vendor_tier": "Silver",           <-- optional
+      "billing_city": "Pune",            <-- optional
+      ...
+    }
+
+  INTERNAL FLOW:
+    1. AuthMiddleware + _require_admin()
+    2. Pydantic validates VendorCreateRequest (name required)
+    3. Convert Python fields to Salesforce API names
+    4. get_next_vendor_id():
+       Query all Vendor_ID__c -> find max -> V-{max+1}
+    5. Salesforce Vendor_Account__c.create(data)
+    6. Fetch full record back
+    7. Return success + full vendor record
+
+  VENDOR ID AUTO-GENERATION:
+    Existing: V-001, V-002, ..., V-025
+    Next:     V-026 (max + 1, zero-padded to 3 digits)
+
+  SUCCESS (201):
+    {
+      "success": true,
+      "salesforce_id": "a02al00000oA5XXAA0",
+      "vendor_id": "V-026",
+      "name": "NewVendor Corp",
+      "message": "Vendor 'NewVendor Corp' created with ID V-026",
+      "vendor": { ... full record ... }
+    }
+
+  ERRORS:
+    401 / 403 / 422 / 502 (same patterns as GET /vendors)
+```
+
+
+### 9.5 PUT /vendors/{vendor_id}
+
+```
+  PURPOSE: Update fields of a Vendor_Account__c record
+  FILE:    api/routes/vendors.py -> update_vendor()
+  AUTH:    Bearer token, ADMIN role required
+
+  REQUEST:
+    PUT /vendors/V-001        (or PUT /vendors/a02al00000oA5JOAA0)
+    Authorization: Bearer eyJhbG...
+    Content-Type: application/json
+    {
+      "vendor_tier": "Gold",
+      "payment_terms": "Net 45"
+    }
+
+  VENDOR ID FORMATS (both accepted):
+    Format 1: Salesforce Record ID  (a02al00000oA5JOAA0) — used directly
+    Format 2: Custom Vendor Code    (V-001) — SOQL lookup to resolve
+
+  UPDATABLE FIELDS:
+    website, vendor_tier, category, payment_terms,
+    annual_revenue, sla_response_hours, sla_resolution_days,
+    vendor_status, onboarded_date, billing_city,
+    billing_state, billing_country
+
+  SUCCESS (200):
+    {
+      "success": true,
+      "vendor_id": "V-001",
+      "updated_fields": ["Vendor_Tier__c", "Payment_Terms__c"],
+      "message": "Updated 2 field(s) for vendor V-001",
+      "vendor": { ... full record after update ... }
+    }
+
+  ERRORS:
+    422 "At least one field must be provided" — empty body
+```
+
+
+### 9.6 DELETE /vendors/{vendor_id}
+
+```
+  PURPOSE: Permanently delete Vendor_Account__c from Salesforce
+  FILE:    api/routes/vendors.py -> delete_vendor()
+  AUTH:    Bearer token, ADMIN role required
+  WARNING: Permanent deletion — no undo!
+
+  REQUEST:
+    DELETE /vendors/V-025
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    1. AuthMiddleware + _require_admin()
+    2. Detect vendor_id format (Record ID or Vendor Code)
+    3. If Vendor Code: SOQL lookup to resolve to Record ID
+    4. Vendor_Account__c.delete(record_id)
+    5. Return success
+
+  SUCCESS (200):
+    {
+      "success": true,
+      "vendor_id": "V-025",
+      "message": "Vendor V-025 deleted successfully"
+    }
+```
+
+
+### 9.7 POST /queries
+
+```
+  PURPOSE: Submit a new vendor query from the portal
+  FILE:    api/routes/queries.py -> submit_query_endpoint()
+  SERVICE: services/portal_submission.py -> PortalIntakeService
+  AUTH:    Bearer token required
+
+  REQUEST:
+    POST /queries
+    Authorization: Bearer eyJhbG...
+    X-Vendor-ID: 001al00002Ie1zsAAB      <-- REQUIRED header
+    Content-Type: application/json
+    {
+      "query_type": "invoice",
+      "subject": "Invoice INV-2026-1234 payment status",
+      "description": "We submitted invoice INV-2026-1234 on March 15...",
+      "priority": "HIGH",
+      "reference_number": "INV-2026-1234"
+    }
+
+  INPUT VALIDATION:
+    query_type:       required, any string
+    subject:          required, 5-500 characters
+    description:      required, 10-5000 characters
+    priority:         optional, LOW/MEDIUM/HIGH/CRITICAL (default MEDIUM)
+    reference_number: optional
+
+  INTERNAL FLOW:
+    1. AuthMiddleware validates JWT
+    2. Pydantic validates QuerySubmission
+    3. PortalIntakeService.submit_query():
+       a. Generate SHA-256 idempotency hash(vendor_id + subject + description)
+       b. INSERT INTO cache.idempotency_keys ON CONFLICT DO NOTHING
+          -> if already exists: 409 Duplicate
+       c. Generate IDs: query_id (VQ-2026-XXXX), correlation_id, execution_id
+       d. Create UnifiedQueryPayload
+       e. INSERT into workflow.case_execution
+       f. Publish "QueryReceived" to EventBridge
+       g. Enqueue to SQS (vqms-query-intake queue)
+       h. Return query_id + status
+
+  SUCCESS (201):
+    {
+      "query_id": "VQ-2026-0042",
+      "status": "RECEIVED"
+    }
+
+  WHAT HAPPENS NEXT:
+    SQS consumer picks up the message
+    -> LangGraph pipeline runs (Steps 7-12)
+    -> AI analyzes, routes, drafts, validates, delivers
+
+  ERRORS:
+    401 "Not authenticated"
+    409 "Duplicate query: <hash>"
+    422 validation error (subject < 5 chars, etc.)
+    503 "Portal Intake Service unavailable"
+```
+
+
+### 9.8 GET /queries/{query_id}
+
+```
+  PURPOSE: Check the status of a submitted query
+  FILE:    api/routes/queries.py -> get_query_status()
+  AUTH:    Bearer token required
+
+  REQUEST:
+    GET /queries/VQ-2026-0042
+    Authorization: Bearer eyJhbG...
+    X-Vendor-ID: 001al00002Ie1zsAAB      <-- ownership check
+
+  INTERNAL FLOW:
+    SELECT query_id, status, source, processing_path,
+           created_at, updated_at
+    FROM workflow.case_execution
+    WHERE query_id = $1 AND vendor_id = $2
+
+  STATUS VALUES:
+    RECEIVED           — query entered the system
+    ANALYZING          — AI pipeline is processing
+    ROUTING            — being routed to correct team
+    DRAFTING           — generating email draft
+    QUALITY_CHECK      — quality gate validating draft
+    VALIDATED          — draft passed quality gate
+    RESOLVED           — answer sent (Path A complete)
+    AWAITING_RESOLUTION— ack sent, team investigating (Path B)
+    PAUSED             — waiting for human review (Path C)
+    CLOSED             — fully resolved and closed
+
+  SUCCESS (200):
+    {
+      "query_id": "VQ-2026-0042",
+      "status": "RECEIVED",
+      "source": "portal",
+      "processing_path": null,
+      "created_at": "2026-04-14 14:30:00",
+      "updated_at": "2026-04-14 14:30:00"
+    }
+
+  ERRORS:
+    401 / 404 "Query not found" (wrong ID or wrong vendor)
+```
+
+
+### 9.9 GET /emails
+
+```
+  PURPOSE: Paginated list of email chains for the dashboard
+  FILE:    api/routes/emails.py -> list_emails()
+  SERVICE: services/email_dashboard/ -> EmailDashboardService
+  AUTH:    Bearer token required
+
+  REQUEST:
+    GET /emails?page=1&page_size=20&status=New&priority=High&search=invoice&sort_by=timestamp&sort_order=desc
+
+  QUERY PARAMETERS:
+    page       — integer, default 1 (>= 1)
+    page_size  — integer, default 20 (1-100)
+    status     — "New", "Reopened", "Resolved" (optional)
+    priority   — "High", "Medium", "Low" (optional)
+    search     — searches subject + sender email (optional)
+    sort_by    — "timestamp", "status", "priority" (default timestamp)
+    sort_order — "asc", "desc" (default desc)
+
+  INTERNAL FLOW (4-query pattern):
+    Query 1: COUNT — total matching records
+    Query 2: PAGE KEYS — 20 thread keys for this page
+    Query 3: EMAILS — all emails for those 20 threads
+    Query 4: ATTACHMENTS — all attachments for those emails
+    Group by conversation_id into chains
+
+  SUCCESS (200):
+    {
+      "total": 47,
+      "page": 1,
+      "page_size": 20,
+      "mail_chains": [
+        {
+          "conversation_id": "AAQkADY3...",
+          "mail_items": [
+            {
+              "query_id": "VQ-2026-0001",
+              "sender": {"name": "Rajesh Kumar", "email": "rajesh@technova.com"},
+              "subject": "Invoice INV-2026-001 payment query",
+              "body": "Dear Team...",
+              "timestamp": "2026-04-10T09:30:00+05:30",
+              "attachments": [...],
+              "thread_status": "NEW"
+            }
+          ],
+          "status": "New",
+          "priority": "High"
+        }
+      ]
+    }
+```
+
+
+### 9.10 GET /emails/stats
+
+```
+  PURPOSE: Aggregate statistics for the email dashboard
+  FILE:    api/routes/emails.py -> get_email_stats()
+  SERVICE: services/email_dashboard/ -> EmailDashboardService
+  AUTH:    Bearer token required
+
+  REQUEST:
+    GET /emails/stats
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    Single SQL query using COUNT with FILTER clauses:
+    SELECT
+      COUNT(*) AS total_emails,
+      COUNT(*) FILTER (WHERE status IN (...)) AS new_count,
+      COUNT(*) FILTER (WHERE status = 'REOPENED') AS reopened,
+      COUNT(*) FILTER (WHERE status IN (...)) AS resolved,
+      COUNT(*) FILTER (WHERE priority = 'HIGH') AS high,
+      COUNT(*) FILTER (WHERE priority = 'MEDIUM') AS medium,
+      COUNT(*) FILTER (WHERE priority = 'LOW') AS low,
+      COUNT(*) FILTER (WHERE created_at >= today) AS today,
+      COUNT(*) FILTER (WHERE created_at >= 7_days_ago) AS week
+    FROM intake.email_messages em
+    JOIN workflow.case_execution ce ON ...
+    WHERE ce.source = 'email'
+
+    One query, one round-trip, all stats.
+
+  SUCCESS (200):
+    {
+      "total_emails": 156,
+      "new_count": 23,
+      "reopened_count": 5,
+      "resolved_count": 128,
+      "priority_breakdown": {"High": 34, "Medium": 89, "Low": 33},
+      "today_count": 7,
+      "this_week_count": 42
+    }
+```
+
+
+### 9.11 GET /emails/{query_id}
+
+```
+  PURPOSE: Single email chain with full thread detail
+  FILE:    api/routes/emails.py -> get_email_detail()
+  AUTH:    Bearer token required
+
+  REQUEST:
+    GET /emails/VQ-2026-0001
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    1. Look up email by query_id
+    2. If has conversation_id: fetch ALL emails in thread
+    3. If no conversation_id: return single email as chain
+    4. Fetch attachments for all emails in chain
+    5. Return MailChainResponse
+
+  SUCCESS (200):
+    {
+      "conversation_id": "AAQkADY3...",
+      "mail_items": [
+        {
+          "query_id": "VQ-2026-0001",
+          "sender": {"name": "Rajesh Kumar", "email": "rajesh@technova.com"},
+          "subject": "Invoice query",
+          "body": "Dear Team...",
+          "timestamp": "2026-04-10T09:30:00+05:30",
+          "attachments": [],
+          "thread_status": "NEW"
+        },
+        {
+          "query_id": "VQ-2026-0003",
+          "subject": "Re: Invoice query",
+          "thread_status": "EXISTING_OPEN"
+        }
+      ],
+      "status": "New",
+      "priority": "High"
+    }
+
+  ERRORS:
+    404 "Email chain not found for query_id: VQ-2026-9999"
+```
+
+
+### 9.12 GET /emails/{query_id}/attachments/{attachment_id}/download
+
+```
+  PURPOSE: Get temporary download URL for an email attachment
+  FILE:    api/routes/emails.py -> download_attachment()
+  AUTH:    Bearer token required
+
+  REQUEST:
+    GET /emails/VQ-2026-0001/attachments/att-001/download
+    Authorization: Bearer eyJhbG...
+
+  INTERNAL FLOW:
+    1. Look up attachment in intake.email_attachments
+    2. If not found: 404
+    3. If no s3_key: 404
+    4. Generate presigned URL from S3 (valid 1 hour)
+    5. Return URL + metadata
+
+  SUCCESS (200):
+    {
+      "attachment_id": "att-001",
+      "filename": "invoice.pdf",
+      "download_url": "https://vqms-data-store.s3.amazonaws.com/attachments/...",
+      "expires_in_seconds": 3600
+    }
+```
+
+
+### 9.13 POST /webhooks/ms-graph
+
+```
+  PURPOSE: Receive email notifications from Microsoft Graph API
+  FILE:    api/routes/webhooks.py -> handle_graph_notification()
+  AUTH:    None (MS Graph validation tokens, not JWT)
+
+  TWO SCENARIOS:
+
+  SCENARIO 1: VALIDATION HANDSHAKE
+    When we subscribe, Microsoft sends a validation request.
+    POST /webhooks/ms-graph?validationToken=abc123xyz
+    Response: 200 OK with body "abc123xyz" (plain text)
+
+  SCENARIO 2: EMAIL NOTIFICATION
+    When a new email arrives:
+    POST /webhooks/ms-graph
+    { "value": [{ "resource": "Users/.../Messages/AAMk123..." }] }
+
+    Internal flow:
+      1. Parse notification body
+      2. Extract message_id from resource path
+      3. Call services/email_intake/ -> process_email()
+      4. Results: Success (log) / Duplicate (skip) / Error (log)
+      5. Return {"status": "accepted"}
+
+  NOTE: Always returns 200 — Microsoft retries on non-200,
+  which would flood us with duplicate notifications.
+```
+
+
+### 9.14 GET /health
+
+```
+  PURPOSE: Application health check (load balancers, monitoring)
+  FILE:    api/routes/health.py -> health_check()
+  AUTH:    None (public endpoint)
+
+  REQUEST:
+    GET /health
+
+  INTERNAL FLOW:
+    1. Check if app.state.postgres exists
+    2. Run postgres.health_check() (SELECT 1)
+    3. Return status
+
+  SUCCESS (200):
+    {
+      "status": "healthy",
+      "app": "vqms",
+      "version": "0.1.0",
+      "database": "connected"       (or "disconnected")
+    }
+```
+
+
+### SECURITY HEADERS ON EVERY RESPONSE
+
+```
+  +-------------------------------+-------------------------------------------+
+  | Header                        | What It Protects Against                  |
+  +-------------------------------+-------------------------------------------+
+  | Content-Security-Policy       | XSS — only allows scripts from our domain |
+  | Server: hidden                | Hides server identity (uvicorn)           |
+  | X-Content-Type-Options:       | Prevents MIME sniffing attacks             |
+  |   nosniff                     |                                           |
+  | X-XSS-Protection: 1;mode=block| Legacy XSS filter for older browsers      |
+  | X-Frame-Options: DENY         | Prevents clickjacking (no iframes)        |
+  | Strict-Transport-Security     | Forces HTTPS for 1 year                   |
+  | Referrer-Policy: no-referrer  | Don't leak URLs to external sites         |
+  | Permissions-Policy            | Blocks unused browser APIs                |
+  | Cache-Control: no-store       | Never cache API responses                 |
+  +-------------------------------+-------------------------------------------+
+```
+
+
+### ERROR CODE QUICK REFERENCE
+
+```
+  +------+-------------------------+-------------------------------------------+
+  | Code | Meaning                 | When You'll See It                        |
+  +------+-------------------------+-------------------------------------------+
+  | 200  | OK                      | Successful GET, logout, update, delete    |
+  | 201  | Created                 | POST /queries or POST /vendors succeeded  |
+  | 400  | Bad Request             | Malformed logout request                  |
+  | 401  | Unauthorized            | No/expired/blacklisted/invalid token      |
+  | 403  | Forbidden               | Not ADMIN for vendor CRUD endpoints       |
+  | 404  | Not Found               | Query/attachment/email not found           |
+  | 409  | Conflict                | Duplicate query (same vendor+subject+desc)|
+  | 422  | Unprocessable Entity    | Validation failed (short subject, etc.)   |
+  | 502  | Bad Gateway             | Salesforce API call failed                |
+  | 503  | Service Unavailable     | DB or service not connected at startup    |
+  +------+-------------------------+-------------------------------------------+
+```
+
+
+### QUICK START: TESTING ALL APIs IN ORDER
+
+```
+  STEP  1: GET  /health                              (no auth)
+  STEP  2: POST /auth/login                          (get token)
+            Body: {"username_or_email":"admin_user","password":"admin123"}
+            --> Save the "token" from response
+
+  STEP  3: Set header for ALL remaining requests:
+            Authorization: Bearer <token>
+
+  STEP  4: GET  /vendors                             (list vendors, ADMIN)
+  STEP  5: POST /vendors                             (create vendor, ADMIN)
+            Body: {"name":"Test Corp","vendor_tier":"Silver"}
+            --> Save "vendor_id" (V-026)
+
+  STEP  6: PUT  /vendors/V-026                       (update vendor, ADMIN)
+            Body: {"vendor_tier":"Gold"}
+
+  STEP  7: DELETE /vendors/V-026                     (delete vendor, ADMIN)
+
+  STEP  8: POST /queries                             (submit query)
+            Headers: X-Vendor-ID: 001al00002Ie1zsAAB
+            Body: {"query_type":"invoice","subject":"Test query",
+                   "description":"Testing the query API","priority":"LOW"}
+            --> Save "query_id" (VQ-2026-XXXX)
+
+  STEP  9: GET  /queries/VQ-2026-XXXX                (check status)
+            Headers: X-Vendor-ID: 001al00002Ie1zsAAB
+
+  STEP 10: GET  /emails                              (email dashboard)
+  STEP 11: GET  /emails/stats                        (dashboard stats)
+  STEP 12: POST /auth/logout                         (invalidate token)
+            --> Token is now blacklisted
+```
+
+
+### SWAGGER UI USAGE
+
+```
+  +-----------------------------------------------------------+
+  |                                                           |
+  |  1. Open http://localhost:8001/docs                       |
+  |                                                           |
+  |  2. POST /auth/login -> "Try it out" ->                   |
+  |     {"username_or_email":"admin_user","password":"admin123"}|
+  |     -> Execute -> Copy "token" from response              |
+  |                                                           |
+  |  3. Click green "Authorize" button (top-right)            |
+  |     Paste token (without quotes) -> Authorize -> Close    |
+  |                                                           |
+  |  4. ALL endpoints now include your token automatically    |
+  |     Try any endpoint!                                     |
+  |                                                           |
+  +-----------------------------------------------------------+
+```
+
+
+### API-TO-PIPELINE CONNECTION MAP
+
+This shows how API endpoints connect to the AI pipeline:
+
+```
+  POST /queries (portal submission)
+      |
+      v
+  PortalIntakeService.submit_query()
+      |
+      |  1. Idempotency check (PostgreSQL)
+      |  2. Generate IDs (VQ-2026-XXXX)
+      |  3. INSERT case_execution
+      |  4. EventBridge: "QueryReceived"
+      |  5. SQS: enqueue payload
+      |
+      v
+  SQS Consumer picks up message
+      |
+      v
+  LangGraph Pipeline (Steps 7-12)
+      |
+      +-- Step 7:  Context Loading (vendor profile + history)
+      +-- Step 8:  Query Analysis (LLM Call #1)
+      +-- Decision Point 1: Confidence >= 0.85?
+      |     NO  -> Path C (PAUSED, triage queue)
+      |     YES -> continue
+      +-- Step 9A: Routing (team + SLA)
+      +-- Step 9B: KB Search (pgvector similarity)
+      +-- Decision Point 2: KB match >= 0.80?
+      |     YES -> Path A: Resolution (LLM Call #2, full answer)
+      |     NO  -> Path B: Acknowledgment (LLM Call #2, receipt only)
+      +-- Step 11: Quality Gate (7 checks)
+      +-- Step 12: Delivery (ServiceNow ticket + email send)
+      |
+      v
+  GET /queries/{query_id} (vendor checks status)
+      |
+      v
+  Status progresses: RECEIVED -> ANALYZING -> ROUTING ->
+    DRAFTING -> QUALITY_CHECK -> VALIDATED -> RESOLVED (or AWAITING_RESOLUTION)
+```
+
+---
+
+*This document references real code at `vqm_ps/src/`.
+Every class name, method name, file path, and SQL query is from the actual codebase.
+For full API details with every field and edge case, see `docs/api_documentation.md`.*
+
+---
+
+*Generated for VQMS v0.1.0 — Hexaware Technologies*
+*Last updated: 2026-04-16*

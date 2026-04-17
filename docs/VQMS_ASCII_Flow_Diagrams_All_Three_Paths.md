@@ -43,7 +43,7 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │ Services used:                                                               │
 │   - AWS Cognito (vqms-agent-portal-users): Validates email+password or       │
 │     federated SSO, creates JWT with vendor claims and role scopes            │
-│   - Redis (vqms:session:<token>): Stores session state with 8-hour TTL      │
+│   - PostgreSQL (cache.kv_store): Stores session state with 8-hour TTL       │
 │     for fast subsequent request validation                                   │
 │   - Company SSO (Okta / Azure AD): If SSO path, handles password check      │
 │     and returns SAML/OIDC assertion back to Cognito                          │
@@ -63,7 +63,7 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │ What happens:                                                                │
 │   1. Browser sends GET /vendor/queries?vendor_id=INF with JWT                │
 │   2. API Gateway validates the JWT via Cognito Authorizer                    │
-│   3. Backend checks Redis cache for pre-computed KPIs                        │
+│   3. Backend checks PostgreSQL cache for pre-computed KPIs                   │
 │      - CACHE HIT (< 5 min old): use cached numbers, skip database           │
 │      - CACHE MISS: query PostgreSQL for counts, compute KPIs,               │
 │        write fresh cache entry with 5-min TTL                                │
@@ -73,7 +73,7 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │ Services used:                                                               │
 │   - API Gateway + Cognito Authorizer: Validates JWT, extracts vendor_id,     │
 │     rejects invalid/expired tokens with 401                                  │
-│   - Redis (vqms:vendor:VN-30892:kpis): Fast KPI cache with 5-min TTL        │
+│   - PostgreSQL (cache.kv_store): KPI cache with 5-min TTL                   │
 │     Returns: open=3, resolved=11, avg_response=3.1h                          │
 │   - PostgreSQL (workflow.case_execution): Source of truth for query           │
 │     counts and recent queries when cache is expired                           │
@@ -99,8 +99,8 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │   4. NO server call is made — zero network traffic                           │
 │                                                                              │
 │ Services used:                                                               │
-│   - Browser only (client-side React state): Stores selection locally         │
-│     No backend, no Redis, no PostgreSQL, no API call                         │
+│   - Browser only (client-side Angular state): Stores selection locally       │
+│     No backend, no PostgreSQL, no API call                                   │
 │                                                                              │
 │ Output:  WD.type = "invoice" stored in browser memory                        │
 │          This becomes a classification HINT for the AI in Step 8             │
@@ -126,7 +126,7 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │   5. All data saved in browser memory ONLY — still no server call            │
 │                                                                              │
 │ Services used:                                                               │
-│   - Browser only (client-side React state): Accumulates wizard data          │
+│   - Browser only (client-side Angular state): Accumulates wizard data        │
 │     WD = { type:"invoice", subject:"...", desc:"...",                        │
 │            priority:"High", ref:"PO-HEX-78412" }                            │
 │                                                                              │
@@ -192,16 +192,16 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │     - correlation_id: f1a2b3c4-... (UUID v4, cross-system linking)           │
 │                                                                              │
 │   SUB-STEP 6.4: IDEMPOTENCY CHECK                                           │
-│     - Redis GET vqms:idempotency:<sha256(subject+desc+vendor)>               │
-│     - Result: NOT FOUND -> new query, proceed                                │
-│     - If FOUND: would return existing query_id (prevents double-submit)      │
+│     - PostgreSQL INSERT INTO cache.idempotency_keys ON CONFLICT DO NOTHING   │
+│     - Result: INSERT succeeded -> new query, proceed                         │
+│     - If CONFLICT: would return existing query_id (prevents double-submit)   │
 │                                                                              │
 │   SUB-STEP 6.5: SAVE TO DATABASE                                            │
 │     - INSERT INTO workflow.case_execution with all fields                    │
 │     - status = 'OPEN', created_at = 2026-04-02T08:14:00Z                    │
 │                                                                              │
 │   SUB-STEP 6.6: SET IDEMPOTENCY GUARD                                       │
-│     - Redis SET vqms:idempotency:<hash> "VQ-2026-0108" EX 604800 (7 days)   │
+│     - (Idempotency guard set in SUB-STEP 6.4 via INSERT ON CONFLICT)        │
 │                                                                              │
 │   SUB-STEP 6.7: PUBLISH EVENT                                               │
 │     - EventBridge: QueryReceived on vqms-event-bus                           │
@@ -219,13 +219,13 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │ Services used:                                                               │
 │   - API Gateway + Cognito Authorizer: JWT validation, vendor_id extraction   │
 │   - Query API Service (Pydantic): Payload validation, ID generation          │
-│   - Redis: Idempotency check (GET) + guard (SET with 7-day TTL)             │
+│   - PostgreSQL (cache.idempotency_keys): INSERT ON CONFLICT (7-day TTL)     │
 │   - PostgreSQL (workflow.case_execution): Persist query record               │
 │   - EventBridge (vqms-event-bus): Publish QueryReceived event                │
 │   - SQS (vqms-query-intake-queue): Queue message for async AI pipeline       │
 │                                                                              │
 │ Output:  Rajesh gets VQ-2026-0108 in ~400ms. Browser shows success screen.   │
-│          Writes: PostgreSQL(1), Redis(2), SQS(1), EventBridge(1)             │
+│          Writes: PostgreSQL(2), SQS(1), EventBridge(1)                       │
 │                                                                              │
 │ Time: < 500ms | Cost: $0.00 | LLM: No                                       │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -250,19 +250,19 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │     - PostgreSQL: UPDATE case_execution SET status='ANALYZING'               │
 │                                                                              │
 │   SUB-STEP 7.2: CACHE WORKFLOW STATE                                         │
-│     - Redis SET vqms:workflow:b2c4d6e8-...                                   │
+│     - PostgreSQL cache.workflow_state_cache: INSERT                           │
 │       { status:"ANALYZING", query_id:"VQ-2026-0108",                         │
 │         vendor_id:"VN-30892", step:"INIT" }                                  │
-│       TTL = 24 hours                                                         │
+│       expires_at = NOW() + 24 hours                                          │
 │                                                                              │
 │   SUB-STEP 7.3: LOAD VENDOR PROFILE                                         │
-│     - Redis GET vqms:vendor:VN-30892                                         │
+│     - PostgreSQL cache.vendor_cache: SELECT WHERE vendor_id='VN-30892'       │
 │     - Result: CACHE MISS (TechNova profile expired > 1 hour ago)             │
 │     - Fallback to Salesforce CRM API:                                        │
 │       SELECT Account WHERE Vendor_Id__c = 'VN-30892'                         │
 │     - Result: tier=SILVER, risk_flags=["OVERDUE_INVOICE_HISTORY"],           │
 │       account_manager="Anil Kapoor", payment_terms="Net 30"                  │
-│     - Cache result: Redis SET vqms:vendor:VN-30892 <json> EX 3600 (1 hour)  │
+│     - Cache result: PostgreSQL INSERT cache.vendor_cache (1 hour TTL)        │
 │                                                                              │
 │   SUB-STEP 7.4: LOAD VENDOR HISTORY (EPISODIC MEMORY)                       │
 │     - PostgreSQL SELECT FROM memory.episodic_memory                          │
@@ -276,10 +276,10 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │   - LangGraph Orchestrator: SQS consumer, workflow initialization            │
 │   - SQS (vqms-query-intake-queue): Source of trigger message                 │
 │   - PostgreSQL (workflow.case_execution): Status update                       │
-│   - Redis (vqms:workflow:*): Workflow state cache (24h TTL)                   │
-│   - Redis (vqms:vendor:VN-30892): Vendor profile cache check (MISS)         │
+│   - PostgreSQL (cache.workflow_state_cache): Workflow state cache (24h TTL)   │
+│   - PostgreSQL (cache.vendor_cache): Vendor profile cache check (MISS)       │
 │   - Salesforce CRM API: Vendor master lookup (tier, risk, contacts)          │
-│   - Redis (vqms:vendor:VN-30892): Cache Salesforce result (1h TTL)           │
+│   - PostgreSQL (cache.vendor_cache): Cache Salesforce result (1h TTL)        │
 │   - PostgreSQL (memory.episodic_memory): Historical vendor interactions      │
 │                                                                              │
 │ Output:  Full context package assembled:                                     │
@@ -302,8 +302,8 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │ What happens:                                                                │
 │                                                                              │
 │   SUB-STEP 8.1: LOAD PROMPT TEMPLATE                                        │
-│     - S3 GET from vqms-knowledge-artifacts-prod                              │
-│       templates/query-analysis/v2.json                                       │
+│     - Prompt Manager loads local Jinja2 template                             │
+│       src/orchestration/prompts/ (versioned prompt templates)                │
 │                                                                              │
 │   SUB-STEP 8.2: BUILD PROMPT                                                │
 │     - System: "You are a query analysis agent for VQMS. Return JSON:         │
@@ -333,18 +333,18 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
 │   SUB-STEP 8.6: SAVE & PUBLISH                                              │
 │     - S3: prompt snapshot for audit trail                                     │
 │     - PostgreSQL: UPDATE case_execution with analysis_result                  │
-│     - Redis: workflow state -> ANALYSIS_COMPLETE                              │
+│     - PostgreSQL: workflow state cache -> ANALYSIS_COMPLETE                   │
 │     - PostgreSQL: INSERT audit.action_log (ANALYSIS_COMPLETED)               │
 │     - EventBridge: AnalysisCompleted event                                   │
 │                                                                              │
 │ Services used:                                                               │
-│   - S3 (vqms-knowledge-artifacts-prod): Load versioned prompt template       │
+│   - Prompt Manager (local Jinja2 templates): Load versioned prompt template  │
 │   - Amazon Bedrock (Claude Sonnet 3.5): LLM inference for classification     │
-│     via Bedrock Integration Service (single LLM gateway)                     │
-│   - S3 (vqms-knowledge-artifacts-prod): Store prompt snapshot for audit      │
+│     via LLM Gateway adapter (single LLM interface)                           │
+│   - S3 (vqms-data-store): Store prompt snapshot for audit                    │
 │   - PostgreSQL (workflow.case_execution): Store analysis result (JSONB)       │
 │   - PostgreSQL (audit.action_log): Immutable audit record                    │
-│   - Redis (vqms:workflow:*): Update workflow state cache                      │
+│   - PostgreSQL (cache.workflow_state_cache): Update workflow state            │
 │   - EventBridge (vqms-event-bus): Publish AnalysisCompleted event            │
 │                                                                              │
 │ Output:  AnalysisResult: { intent:PAYMENT_QUERY, confidence:0.96,            │
@@ -407,10 +407,10 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
                   │    │                                                              │
                   │    │ Services used:                                               │
                   │    │   - SQS (vqms-human-review-queue): TriagePackage pushed      │
-                  │    │   - AWS Step Functions: Workflow PAUSES using callback        │
-                  │    │     token pattern — a task token is generated and stored      │
-                  │    │     with the triage package. The workflow will NOT proceed    │
-                  │    │     until a human sends the callback.                        │
+                  │    │   - LangGraph: Workflow PAUSES using callback token           │
+                  │    │     pattern — a task token is generated and stored with the   │
+                  │    │     triage package. The workflow will NOT proceed until a     │
+                  │    │     human sends the callback via the triage API.             │
                   │    │   - PostgreSQL: case_execution status = PAUSED_HUMAN_REVIEW  │
                   │    │   - EventBridge: HumanReviewRequired event published         │
                   │    │                                                              │
@@ -470,8 +470,8 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
                   │    │ Input:   Reviewer's corrections via callback                 │
                   │    │                                                              │
                   │    │ What happens:                                                │
-                  │    │   1. Reviewer's submission calls Step Functions               │
-                  │    │      SendTaskSuccess with the callback token                 │
+                  │    │   1. Reviewer's submission calls the triage API which         │
+                  │    │      resumes the LangGraph workflow with corrected data      │
                   │    │   2. Workflow RESUMES with corrected data                    │
                   │    │   3. PostgreSQL: case_execution updated with                 │
                   │    │      reviewer-validated analysis_result                       │
@@ -482,9 +482,9 @@ RESULT: AI resolved in ~11 seconds, cost ~$0.033, ticket INC0019847
                   │    │   (Routing + KB Search) with the corrected data.             │
                   │    │                                                              │
                   │    │ Services used:                                               │
-                  │    │   - Step Functions: SendTaskSuccess resumes workflow          │
+                  │    │   - LangGraph: Workflow resumes with corrected data           │
                   │    │   - PostgreSQL: Updated with corrected analysis              │
-                  │    │   - Redis: Workflow state updated                             │
+                  │    │   - PostgreSQL (cache): Workflow state updated               │
                   │    │   - EventBridge: HumanReviewCompleted event                  │
                   │    │                                                              │
                   │    │ Output:  Corrected, human-validated data ready for routing   │
@@ -602,18 +602,18 @@ PATH A: AI-RESOLVED FLOW (KB has the answer)
 │                                                                              │
 │   The AI is NOT making this up. It found the answer in company records.      │
 │                                                                              │
-│   SUB-STEP 10A.1: LOAD PROMPT TEMPLATE from S3                              │
+│   SUB-STEP 10A.1: LOAD PROMPT TEMPLATE (local Jinja2 via Prompt Manager)    │
 │   SUB-STEP 10A.2: ASSEMBLE FULL CONTEXT (query + KB + vendor + SLA)         │
 │   SUB-STEP 10A.3: CALL BEDROCK (Claude Sonnet 3.5, temp 0.3, ~3000 in)     │
 │   SUB-STEP 10A.4: PARSE RESPONSE (Pydantic: DraftResponse)                  │
 │     - confidence: 0.93 | sources: KB#1203, KB#891                            │
-│   SUB-STEP 10A.5: SAVE & PUBLISH (PG, S3, Redis, EventBridge)               │
+│   SUB-STEP 10A.5: SAVE & PUBLISH (PG, S3, EventBridge)                      │
 │                                                                              │
 │ Services used:                                                               │
-│   - S3 (vqms-knowledge-artifacts-prod): Load resolution prompt template      │
+│   - Prompt Manager (local Jinja2 templates): Load resolution prompt          │
 │   - Amazon Bedrock (Claude Sonnet 3.5): Generate RESOLUTION draft            │
 │   - PostgreSQL (workflow.case_execution): Store draft                         │
-│   - S3: Prompt snapshot for audit | Redis: Update state                      │
+│   - S3: Prompt snapshot for audit | PostgreSQL: Update state cache           │
 │   - EventBridge: DraftPrepared event                                         │
 │                                                                              │
 │ Output:  RESOLUTION email draft with concrete answer (dates, amounts)        │
@@ -673,7 +673,7 @@ PATH A: AI-RESOLVED FLOW (KB has the answer)
 │      - Body: FULL ANSWER with payment timeline, ticket#, SLA                 │
 │                                                                              │
 │   3. STATUS UPDATES                                                          │
-│      - PostgreSQL: status = RESPONDED | Redis: workflow = COMPLETE            │
+│      - PostgreSQL: status = RESPONDED | cache: workflow = COMPLETE            │
 │      - Audit log: EMAIL_SENT | EventBridge: TicketCreated + EmailSent        │
 │                                                                              │
 │ Output:  Rajesh gets his FULL ANSWER. Finance Team monitors ticket.          │
@@ -718,8 +718,9 @@ PATH B: HUMAN-TEAM-RESOLVED FLOW (KB does NOT have the answer)
 │ Services used:                                                               │
 │   - Amazon Bedrock (Claude Sonnet 3.5): Generate ACKNOWLEDGMENT draft        │
 │     (uses acknowledgment template, NOT resolution template)                  │
-│   - S3: Load acknowledgment prompt template + store snapshot                 │
-│   - PostgreSQL + Redis + EventBridge: Status updates and audit               │
+│   - Prompt Manager: Load acknowledgment prompt template                      │
+│   - S3: Store prompt snapshot for audit                                      │
+│   - PostgreSQL + EventBridge: Status updates and audit                       │
 │                                                                              │
 │ Output:  ACKNOWLEDGMENT email draft (no answer, just confirmation)           │
 │                                                                              │
@@ -857,7 +858,7 @@ PATH B: HUMAN-TEAM-RESOLVED FLOW (KB does NOT have the answer)
 │     Finance Team's notes + original context + vendor profile                 │
 │   - QualityGateAgent + Amazon Comprehend: Validate draft (7 checks + PII)   │
 │   - Microsoft Graph API: Send resolution email to Rajesh                     │
-│   - PostgreSQL + Redis + S3 + EventBridge: Status updates, audit trail       │
+│   - PostgreSQL + S3 + EventBridge: Status updates, audit trail               │
 │                                                                              │
 │ Output:  Professional resolution email sent to Rajesh                        │
 │          Ticket status: PENDING_CLOSURE                                      │
@@ -891,8 +892,8 @@ BOTH PATHS CONVERGE HERE
 │           does NOT count against SLA. Then follows PATH A or B.              │
 │                                                                              │
 │ Services used:                                                               │
-│   - AWS Step Functions (vqms-sla-monitor): Wait-state based timer            │
-│   - Redis (vqms:sla:<ticket-id>): SLA state tracking                        │
+│   - Background SLA monitor task: Timer-based escalation checks               │
+│   - PostgreSQL (reporting.sla_metrics): SLA state tracking                   │
 │   - EventBridge: SLA warning/escalation events                               │
 │   - SQS (vqms-escalation-queue): Delivers alerts to managers                 │
 │   - PostgreSQL (reporting.sla_metrics): SLA performance data                 │
@@ -920,7 +921,7 @@ BOTH PATHS CONVERGE HERE
 │     - Audit trail finalized                                                  │
 │                                                                              │
 │   OUTCOME B — Rajesh doesn't reply for 5 business days:                      │
-│     - Step Functions wait state expires after 5 days                          │
+│     - Background auto-closure task triggers after 5 business days            │
 │     - Policy-based auto-closure triggers                                     │
 │     - Ticket CLOSED in ServiceNow (same as Outcome A after this)             │
 │                                                                              │
@@ -937,7 +938,7 @@ BOTH PATHS CONVERGE HERE
 │   - QueryAnalysisAgent (Bedrock): Classify reply intent                      │
 │   - LangGraph: Reopen vs new-linked-ticket decision                          │
 │   - ServiceNow: Close or reopen ticket                                       │
-│   - Step Functions: Wait state for auto-closure timeout                      │
+│   - Background task: Auto-closure timeout after 5 business days             │
 │   - PostgreSQL (memory.episodic_memory): Store closure summary               │
 │   - EventBridge: TicketClosed or TicketReopened event                        │
 │                                                                              │
@@ -964,7 +965,7 @@ BOTH PATHS CONVERGE HERE
 ║   Workflow RESUMES with corrected data → then follows PATH A or PATH B      ║
 ║   Human involvement: YES (reviewer first, then possibly team)                ║
 ║                                                                              ║
-║ WRITES (all paths): PostgreSQL(12+), Redis(9+), S3(3+), ServiceNow(1+),    ║
+║ WRITES (all paths): PostgreSQL(15+), S3(3+), ServiceNow(1+),               ║
 ║   MS Graph(1+), Bedrock(2-3), Comprehend(1+), EventBridge(7+), SQS(1+)     ║
 ╚══════════════════════════════════════════════════════════════════════════════╝
 ```

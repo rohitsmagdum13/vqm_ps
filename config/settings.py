@@ -121,7 +121,7 @@ class Settings(BaseSettings):
     database_url: str | None = None  # postgresql+asyncpg://user:pass@host:5432/dbname
     postgres_host: str = "localhost"
     postgres_port: int = 5432
-    postgres_db: str = "vqm"
+    postgres_db: str = "postgres"
     postgres_user: str = "postgres"
     postgres_password: str = ""
     postgres_pool_min: int = 5
@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     # ===========================
     # AWS S3 (Storage — single bucket, prefix-organized)
     # ===========================
-    s3_bucket_data_store: str = "vqms-data-store-01"
+    s3_bucket_data_store: str = "vqms-data-store-001"
 
     # ===========================
     # AWS SQS (Queues)
