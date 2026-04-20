@@ -1,7 +1,0 @@
-<div *ngIf="auth.isLoggedIn()">
-  <a routerLink="/portal">Dashboard</a> |
-  <a routerLink="/new-query-type">New Query</a> |
-  <button (click)="logout()">Logout ({{ auth.getUserName() }})</button>
-  <hr>
-</div>
-<router-outlet></router-outlet>

@@ -1,15 +1,19 @@
-import { ApplicationConfig } from '@angular/core';
-import { provideRouter } from '@angular/router';
-import { provideHttpClient, withInterceptors } from '@angular/common/http';
+import {
+  type ApplicationConfig,
+  provideBrowserGlobalErrorListeners,
+  provideZonelessChangeDetection,
+} from '@angular/core';
+import { provideHttpClient, withFetch, withInterceptors } from '@angular/common/http';
+import { provideRouter, withComponentInputBinding } from '@angular/router';
+
+import { authInterceptor } from './core/auth/auth.interceptor';
 import { routes } from './app.routes';
-import { authInterceptor } from './interceptors/auth.interceptor';
-import { tokenRefreshInterceptor } from './interceptors/token-refresh.interceptor';
 
 export const appConfig: ApplicationConfig = {
   providers: [
-    provideRouter(routes),
-    provideHttpClient(
-      withInterceptors([authInterceptor, tokenRefreshInterceptor])
-    ),
+    provideBrowserGlobalErrorListeners(),
+    provideZonelessChangeDetection(),
+    provideRouter(routes, withComponentInputBinding()),
+    provideHttpClient(withFetch(), withInterceptors([authInterceptor])),
   ],
 };

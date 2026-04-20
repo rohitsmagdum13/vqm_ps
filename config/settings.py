@@ -179,7 +179,7 @@ class Settings(BaseSettings):
     # ===========================
     # AWS S3 (Storage — single bucket, prefix-organized)
     # ===========================
-    s3_bucket_data_store: str = "vqms-data-store-001"
+    s3_bucket_data_store: str = "vqms-data-store-001 "
 
     # ===========================
     # AWS SQS (Queues)

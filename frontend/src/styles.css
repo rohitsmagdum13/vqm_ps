@@ -1,1 +1,93 @@
-/* You can add global styles to this file, and also import other style files */
+@import "tailwindcss";
+
+/* ────────────────────────────────────────────────────────────────
+   VQMS Design Tokens — Tailwind v4 @theme
+   Only these color names are allowed in component templates.
+   ──────────────────────────────────────────────────────────────── */
+@theme {
+  /* Semantic core */
+  --color-primary: #3c2cda;          /* hexaware-blue */
+  --color-secondary: #07125e;        /* dark-blue */
+  --color-accent: #14cbde;           /* electric-blue */
+
+  /* Foreground / background */
+  --color-fg: #040d43;               /* text primary (black) */
+  --color-fg-dim: #8088a7;           /* text muted (silver) */
+  --color-bg: #f4eff2;               /* app background (light) */
+
+  /* Borders */
+  --color-border-light: #cbd0e5;
+  --color-border-dark: #535983;
+
+  /* Surfaces */
+  --color-surface: #ffffff;          /* snow */
+  --color-surface-2: #f8f8f9;        /* hexaware-white */
+  --color-surface-3: #f4eff2;        /* light */
+
+  /* Alerts */
+  --color-error: #da2d2c;
+  --color-success: #10b981;
+  --color-warn: #ea9d00;             /* honey */
+  --color-info: #1d86ff;             /* bright-blue */
+
+  /* Accent extras from prototype */
+  --color-canary: #f4cb4e;
+
+  /* Typography */
+  --font-sans: "Sora", system-ui, -apple-system, sans-serif;
+  --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
+
+  /* Radii */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+
+  /* Shadows (from prototype --sh/--sh2/--sh3) */
+  --shadow-sm: 0 1px 4px rgba(60, 44, 218, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 4px 16px rgba(60, 44, 218, 0.10), 0 2px 6px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 12px 40px rgba(60, 44, 218, 0.13), 0 4px 12px rgba(0, 0, 0, 0.08);
+}
+
+/* Global resets consistent with prototype */
+html, body {
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  font-family: var(--font-sans);
+}
+
+/* Angular custom-element hosts default to `display: inline`, which breaks
+   layout utilities like `space-y-*` and `grid gap-*` when the host element
+   is a direct child of the container. Make every app-level component host
+   a block by default. */
+app-root, [class^="app-"], [class*=" app-"],
+app-admin-dashboard-page, app-admin-kpi-grid, app-admin-alerts,
+app-priority-breakdown, app-stacked-bar-chart, app-period-switcher,
+app-portal-page, app-portal-hero, app-portal-kpi-strip,
+app-portal-quick-actions, app-portal-recent-queries,
+app-queries-page, app-query-filters, app-query-stats, app-query-table,
+app-query-detail-page,
+app-email-page, app-summary-cards, app-filter-rail, app-message-list,
+app-message-viewer,
+app-wizard-page, app-wizard-stepper, app-wizard-step-type,
+app-wizard-step-details, app-wizard-step-review,
+app-wizard-submitting, app-wizard-success,
+app-preferences-page, app-pref-nav, app-profile-box, app-toggle-row,
+app-language-panel,
+app-login-page, app-shell, app-top-nav, app-user-menu, app-page-header,
+app-toast,
+ui-button, ui-badge, ui-kpi-card, ui-sparkline, ui-spinner {
+  display: block;
+}
+
+::-webkit-scrollbar       { width: 4px; height: 4px; }
+::-webkit-scrollbar-thumb { background: var(--color-border-light); border-radius: 4px; }
+
+/* Animations referenced by components */
+@keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes spin    { to   { transform: rotate(360deg); } }
+@keyframes pulse-ring {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
+  50%      { opacity: 0.7; box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
+}

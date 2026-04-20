@@ -1,9 +1,0 @@
-<h1>VQMS Vendor Login</h1>
-<div>
-  <label>Username or Email:</label><br>
-  <input type="text" [(ngModel)]="usernameOrEmail" required><br><br>
-  <label>Password:</label><br>
-  <input type="password" [(ngModel)]="password" required><br><br>
-  <button (click)="login()">Login</button>
-  <p *ngIf="error" style="color:red">{{ error }}</p>
-</div>
