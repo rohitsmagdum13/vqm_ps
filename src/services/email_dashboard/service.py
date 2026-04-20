@@ -160,7 +160,7 @@ class EmailDashboardService:
             tk_placeholders = ", ".join(f"${i + 1}" for i in range(len(thread_keys)))
             emails_sql = (
                 "SELECT em.query_id, em.sender_email, em.sender_name, "
-                "em.subject, em.body_text, em.received_at, em.conversation_id, "
+                "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
                 "em.thread_status, em.message_id, "
                 "ce.status AS case_status, "
                 "rd.priority AS routing_priority "
@@ -314,7 +314,7 @@ class EmailDashboardService:
             if conversation_id:
                 emails_sql = (
                     "SELECT em.query_id, em.sender_email, em.sender_name, "
-                    "em.subject, em.body_text, em.received_at, em.conversation_id, "
+                    "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
                     "em.thread_status, em.message_id "
                     "FROM intake.email_messages em "
                     "WHERE em.conversation_id = $1 "
@@ -324,7 +324,7 @@ class EmailDashboardService:
             else:
                 emails_sql = (
                     "SELECT em.query_id, em.sender_email, em.sender_name, "
-                    "em.subject, em.body_text, em.received_at, em.conversation_id, "
+                    "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
                     "em.thread_status, em.message_id "
                     "FROM intake.email_messages em "
                     "WHERE em.query_id = $1 "

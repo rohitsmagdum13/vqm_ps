@@ -1,4 +1,5 @@
 import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { DomSanitizer, type SafeHtml } from '@angular/platform-browser';
 import { Router } from '@angular/router';
 import { EmailsStore } from '../../data/emails.store';
 import { ToastService } from '../../core/notifications/toast.service';
@@ -17,6 +18,18 @@ interface ItemView {
   readonly initials: string;
   readonly timestamp: string;
   readonly paragraphs: readonly string[];
+  readonly html: SafeHtml | null;
+}
+
+const BLOCKED_TAG_RE = /<\/?(?:script|style|iframe|object|embed|link|meta|base|form)\b[^>]*>/gi;
+const EVENT_HANDLER_ATTR_RE = /\son[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi;
+const JAVASCRIPT_URL_ATTR_RE = /(\s(?:href|src|xlink:href|action|formaction|background|poster|srcdoc)\s*=\s*)(?:"\s*javascript:[^"]*"|'\s*javascript:[^']*'|javascript:[^\s>]+)/gi;
+
+function sanitizeHtml(raw: string): string {
+  return raw
+    .replace(BLOCKED_TAG_RE, '')
+    .replace(EVENT_HANDLER_ATTR_RE, '')
+    .replace(JAVASCRIPT_URL_ATTR_RE, '$1"#"');
 }
 
 const TIME_FMT = new Intl.DateTimeFormat('en-IN', {
@@ -138,7 +151,12 @@ function iconForFormat(format: string): string {
                 </div>
               </div>
 
-              @if (v.paragraphs.length > 0) {
+              @if (v.html) {
+                <div
+                  class="mt-3 text-sm text-fg leading-relaxed email-html-body"
+                  [innerHTML]="v.html"
+                ></div>
+              } @else if (v.paragraphs.length > 0) {
                 <div class="mt-3 space-y-3 text-sm text-fg leading-relaxed">
                   @for (para of v.paragraphs; track $index) {
                     <p class="whitespace-pre-wrap">{{ para }}</p>
@@ -194,6 +212,7 @@ export class MessageViewer {
   readonly #store = inject(EmailsStore);
   readonly #toast = inject(ToastService);
   readonly #router = inject(Router);
+  readonly #sanitizer = inject(DomSanitizer);
 
   protected readonly chain = computed<MailChain | null>(() => this.#store.selectedChain());
   protected readonly detailLoading = this.#store.detailLoading;
@@ -213,6 +232,10 @@ export class MessageViewer {
         .split(/\n{2,}/)
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
+      const rawHtml = item.body_html?.trim() ?? '';
+      const html = rawHtml.length > 0
+        ? this.#sanitizer.bypassSecurityTrustHtml(sanitizeHtml(rawHtml))
+        : null;
       return {
         key: item.query_id || `${idx}`,
         item,
@@ -220,6 +243,7 @@ export class MessageViewer {
         initials: initialsOf(senderName),
         timestamp: formatTimestamp(item.timestamp),
         paragraphs,
+        html,
       };
     });
   });

@@ -37,6 +37,7 @@ class DashboardFormatter:
             ),
             subject=row["subject"],
             body=row["body_text"] or "",
+            body_html=row.get("body_html"),
             timestamp=DashboardMapper.format_timestamp(row["received_at"]),
             attachments=attachments,
             thread_status=row["thread_status"] or "NEW",

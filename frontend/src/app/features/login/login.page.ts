@@ -75,12 +75,23 @@ import type { Role } from '../../shared/models/user';
             <span class="block text-xs font-medium text-fg-dim uppercase tracking-wider mb-1">
               Password
             </span>
-            <input
-              type="password"
-              formControlName="password"
-              autocomplete="current-password"
-              class="w-full rounded-[var(--radius-sm)] border border-border-light bg-surface px-3 py-2 text-sm text-fg focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
-            />
+            <div class="relative">
+              <input
+                [type]="showPassword() ? 'text' : 'password'"
+                formControlName="password"
+                autocomplete="current-password"
+                class="w-full rounded-[var(--radius-sm)] border border-border-light bg-surface px-3 py-2 pr-10 text-sm text-fg focus:border-primary focus:outline-none focus:ring-2 focus:ring-primary/20"
+              />
+              <button
+                type="button"
+                (click)="togglePassword()"
+                [attr.aria-label]="showPassword() ? 'Hide password' : 'Show password'"
+                [attr.aria-pressed]="showPassword()"
+                class="absolute inset-y-0 right-0 w-10 flex items-center justify-center text-fg-dim hover:text-fg transition"
+              >
+                <span aria-hidden="true">{{ showPassword() ? '🙈' : '👁' }}</span>
+              </button>
+            </div>
           </label>
 
           <button
@@ -111,6 +122,7 @@ export class LoginPage {
   protected readonly role = signal<Role>('vendor');
   protected readonly loading = signal<boolean>(false);
   protected readonly loadingStep = signal<number>(0);
+  protected readonly showPassword = signal<boolean>(false);
 
   #tickHandle: number | null = null;
 
@@ -133,6 +145,10 @@ export class LoginPage {
 
   protected setRole(r: Role): void {
     this.role.set(r);
+  }
+
+  protected togglePassword(): void {
+    this.showPassword.update((v) => !v);
   }
 
   protected tabClass(r: Role): string {

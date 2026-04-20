@@ -30,6 +30,7 @@ export interface MailItem {
   readonly sender: MailSender;
   readonly subject: string;
   readonly body: string;
+  readonly body_html: string | null;
   readonly timestamp: string;
   readonly attachments: readonly MailAttachment[];
   readonly thread_status: MailThreadStatus;

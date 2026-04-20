@@ -55,6 +55,7 @@ class MailItemResponse(BaseModel):
     sender: UserResponse = Field(description="Email sender")
     subject: str = Field(description="Email subject line")
     body: str = Field(description="Plain text email body")
+    body_html: str | None = Field(default=None, description="Sanitized HTML email body, if available")
     timestamp: str = Field(description="Received time in ISO 8601 IST format")
     attachments: list[AttachmentSummary] = Field(
         default_factory=list, description="Attachments on this email"
