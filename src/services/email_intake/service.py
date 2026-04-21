@@ -65,6 +65,7 @@ class EmailIntakeService:
         eventbridge: EventBridgeConnector,
         salesforce: SalesforceConnector,
         settings: Settings,
+        closure_service: object | None = None,
     ) -> None:
         """Initialize with all required connectors.
 
@@ -76,12 +77,16 @@ class EmailIntakeService:
             eventbridge: EventBridge connector for event publishing.
             salesforce: Salesforce connector for vendor identification.
             settings: Application settings.
+            closure_service: Optional Phase 6 ClosureService. When present,
+                replies on EXISTING_OPEN / REPLY_TO_CLOSED threads are run
+                through confirmation keyword matching and reopen handling.
         """
         self._graph_api = graph_api
         self._postgres = postgres
         self._sqs = sqs
         self._eventbridge = eventbridge
         self._settings = settings
+        self._closure_service = closure_service
 
         # Compose helper classes
         self._attachment_processor = AttachmentProcessor(s3, settings)
@@ -241,6 +246,22 @@ class EmailIntakeService:
             correlation_id=correlation_id,
         )
 
+        # Phase 6 closure / reopen detection — non-critical.
+        # A reply landing on an existing thread may be a vendor confirmation
+        # (closes the prior case) or a reopen (inside-window: flip back to
+        # AWAITING_RESOLUTION; outside-window: link new case to prior).
+        if (
+            self._closure_service is not None
+            and thread_status in ("EXISTING_OPEN", "REPLY_TO_CLOSED")
+        ):
+            await self._run_closure_detection(
+                thread_status=thread_status,
+                conversation_id=parsed.get("conversation_id"),
+                body_text=body_text,
+                new_query_id=query_id,
+                correlation_id=correlation_id,
+            )
+
         # Build the full parsed payload for the return value
         result = ParsedEmailPayload(
             message_id=message_id,
@@ -274,3 +295,45 @@ class EmailIntakeService:
             correlation_id=correlation_id,
         )
         return result
+
+    async def _run_closure_detection(
+        self,
+        *,
+        thread_status: str,
+        conversation_id: str | None,
+        body_text: str,
+        new_query_id: str,
+        correlation_id: str,
+    ) -> None:
+        """Hand off confirmation / reopen decisions to ClosureService.
+
+        Non-critical: any failure is logged and swallowed so a broken
+        closure path cannot roll back successful email ingestion.
+        """
+        try:
+            was_confirmation = await self._closure_service.detect_confirmation(
+                conversation_id=conversation_id,
+                body_text=body_text,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Confirmation detection failed — continuing",
+                new_query_id=new_query_id,
+                correlation_id=correlation_id,
+            )
+            was_confirmation = False
+
+        if thread_status == "REPLY_TO_CLOSED" and not was_confirmation:
+            try:
+                await self._closure_service.handle_reopen(
+                    conversation_id=conversation_id,
+                    new_query_id=new_query_id,
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Reopen handling failed — continuing",
+                    new_query_id=new_query_id,
+                    correlation_id=correlation_id,
+                )

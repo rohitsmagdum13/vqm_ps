@@ -26,23 +26,47 @@ class TriagePackage(BaseModel):
     Contains everything the reviewer needs to make a decision:
     the original query, the AI's analysis, confidence breakdown,
     and the AI's suggested routing and draft.
+
+    The callback_token is used by the API layer to identify which
+    paused workflow to resume when the reviewer submits corrections.
     """
 
     model_config = ConfigDict(frozen=True)
 
     query_id: str = Field(description="VQMS query ID")
     correlation_id: str = Field(description="UUID v4 tracing ID")
+    callback_token: str = Field(description="Unique token used to resume the paused workflow")
     original_query: UnifiedQueryPayload = Field(description="The original vendor query")
     analysis_result: AnalysisResult = Field(description="AI's analysis output")
     confidence_breakdown: dict = Field(
         default_factory=dict,
         description="Detailed confidence scores by dimension (intent, entity, sentiment)",
     )
-    suggested_routing: RoutingDecision = Field(description="AI's suggested routing decision")
+    suggested_routing: RoutingDecision | None = Field(
+        default=None,
+        description="AI's suggested routing decision (None if routing not yet computed)",
+    )
     suggested_draft: DraftResponse | None = Field(
         default=None,
         description="AI's suggested draft (if available)",
     )
+    created_at: datetime = Field(description="When the triage package was created (IST)")
+
+
+class TriageQueueItem(BaseModel):
+    """Lightweight summary of a triage package for the reviewer queue list.
+
+    Reviewers see these cards in the queue; they open one to get the
+    full TriagePackage for review.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    query_id: str = Field(description="VQMS query ID")
+    correlation_id: str = Field(description="UUID v4 tracing ID")
+    original_confidence: float = Field(description="AI's confidence score (triggered Path C)")
+    suggested_category: str | None = Field(default=None, description="AI's suggested category")
+    status: str = Field(description="Package status: PENDING or REVIEWED")
     created_at: datetime = Field(description="When the triage package was created (IST)")
 
 

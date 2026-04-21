@@ -193,12 +193,21 @@ class PortalIntakeService:
                 correlation_id=correlation_id,
             )
 
-        # SQS [CRITICAL]
-        await self._sqs.send_message(
-            self._settings.sqs_query_intake_queue_url,
-            payload.model_dump(mode="json"),
-            correlation_id=correlation_id,
-        )
+        # SQS [best-effort in dev mode — DB insert is the source of truth]
+        # If the queue URL isn't configured or the SDK raises, log and
+        # continue so the portal still acknowledges the submission.
+        try:
+            await self._sqs.send_message(
+                self._settings.sqs_query_intake_queue_url,
+                payload.model_dump(mode="json"),
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "SQS enqueue failed — query persisted, AI pipeline will not pick it up automatically",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )
 
         logger.info(
             "Portal query submitted",

@@ -1,7 +1,8 @@
-"""One-time script to seed an admin user into tbl_users and tbl_user_roles.
+"""One-time script to seed an admin user and a vendor user into
+tbl_users and tbl_user_roles.
 
-Connects to RDS via SSH tunnel, hashes the password with werkzeug,
-inserts the user and role if they don't already exist.
+Connects to RDS via SSH tunnel, hashes each password with werkzeug,
+and inserts each user and role if they don't already exist.
 
 Usage: uv run python scripts/seed_admin_user.py
 """
@@ -9,6 +10,7 @@ Usage: uv run python scripts/seed_admin_user.py
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 # Add src/ to Python path so imports work when run directly
@@ -28,27 +30,137 @@ from werkzeug.security import generate_password_hash  # noqa: E402
 
 from config.settings import get_settings  # noqa: E402
 
-# --- Admin user details ---
-USER_NAME = "admin_user"
-PASSWORD = "admin123"
-EMAIL = "admin@vqms.local"
-TENANT = "hexaware"
-STATUS = "ACTIVE"
-ROLE = "ADMIN"
-FIRST_NAME = "Admin"
-LAST_NAME = "User"
-CREATED_BY = "system"
+
+@dataclass(frozen=True)
+class SeedUser:
+    """User credentials and role details for a single seeded account."""
+
+    user_name: str
+    password: str
+    email: str
+    tenant: str
+    status: str
+    role: str
+    first_name: str
+    last_name: str
+    created_by: str = "system"
+
+
+USERS_TO_SEED: tuple[SeedUser, ...] = (
+    SeedUser(
+        user_name="admin_user",
+        password="admin123",
+        email="admin@vqms.local",
+        tenant="hexaware",
+        status="ACTIVE",
+        role="ADMIN",
+        first_name="Admin",
+        last_name="User",
+    ),
+    SeedUser(
+        user_name="vendor_user",
+        password="vendor123",
+        email="vendor@vqms.local",
+        tenant="hexaware",
+        status="ACTIVE",
+        role="VENDOR",
+        first_name="Vendor",
+        last_name="User",
+    ),
+    # Dummy vendor logins sourced from vendor_contacts.csv (V-001, V-002, V-003)
+    SeedUser(
+        user_name="sneha.singh",
+        password="vendor_user123",
+        email="sneha.singh@acmeindustrial.com",
+        tenant="hexaware",
+        status="ACTIVE",
+        role="VENDOR",
+        first_name="Sneha",
+        last_name="Singh",
+    ),
+    SeedUser(
+        user_name="dinesh.chauhan",
+        password="vendor_user123",
+        email="dinesh.chauhan@technova.io",
+        tenant="hexaware",
+        status="ACTIVE",
+        role="VENDOR",
+        first_name="Dinesh",
+        last_name="Chauhan",
+    ),
+    SeedUser(
+        user_name="deepak.reddy",
+        password="vendor_user123",
+        email="deepak.reddy@swiftlogfreight.com",
+        tenant="hexaware",
+        status="ACTIVE",
+        role="VENDOR",
+        first_name="Deepak",
+        last_name="Reddy",
+    ),
+)
+
+
+def seed_user(cur, user: SeedUser) -> tuple[bool, bool]:
+    """Insert a user and their role if they don't already exist.
+
+    Returns a tuple (user_inserted, role_inserted).
+    """
+    hashed_password = generate_password_hash(user.password)
+    print(f"[{user.user_name}] Password hashed ({len(hashed_password)} chars)")
+
+    user_inserted = False
+    role_inserted = False
+
+    # Check if user exists
+    cur.execute(
+        "SELECT id FROM public.tbl_users WHERE user_name = %s",
+        (user.user_name,),
+    )
+    if cur.fetchone():
+        print(f"[{user.user_name}] already exists in tbl_users — skipping insert")
+    else:
+        cur.execute(
+            "INSERT INTO public.tbl_users (user_name, email_id, tenant, password, status) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            (user.user_name, user.email, user.tenant, hashed_password, user.status),
+        )
+        user_inserted = True
+        print(f"[{user.user_name}] inserted into tbl_users")
+
+    # Check if role exists
+    cur.execute(
+        "SELECT slno FROM public.tbl_user_roles WHERE user_name = %s",
+        (user.user_name,),
+    )
+    if cur.fetchone():
+        print(f"[{user.user_name}] role already exists — skipping tbl_user_roles insert")
+    else:
+        cur.execute(
+            "INSERT INTO public.tbl_user_roles "
+            "(first_name, last_name, email_id, user_name, tenant, role, created_by, created_date) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())",
+            (
+                user.first_name,
+                user.last_name,
+                user.email,
+                user.user_name,
+                user.tenant,
+                user.role,
+                user.created_by,
+            ),
+        )
+        role_inserted = True
+        print(f"[{user.user_name}] inserted role '{user.role}' into tbl_user_roles")
+
+    return user_inserted, role_inserted
 
 
 def main() -> None:
-    """Seed the admin user into RDS via SSH tunnel."""
+    """Seed configured users into RDS via SSH tunnel."""
     settings = get_settings()
 
-    # 1. Hash the password
-    hashed_password = generate_password_hash(PASSWORD)
-    print(f"Password hashed ({len(hashed_password)} chars)")
-
-    # 2. Establish SSH tunnel to bastion
+    # Establish SSH tunnel to bastion
     key_path = str(Path(settings.ssh_private_key_path))
     print(f"Opening SSH tunnel to {settings.ssh_host}:{settings.ssh_port} ...")
 
@@ -62,7 +174,7 @@ def main() -> None:
     tunnel.start()
     print(f"SSH tunnel open — local port {tunnel.local_bind_port}")
 
-    # 3. Connect to PostgreSQL through the tunnel using psycopg2
+    # Connect to PostgreSQL through the tunnel using psycopg2
     conn = psycopg2.connect(
         host="127.0.0.1",
         port=tunnel.local_bind_port,
@@ -73,51 +185,23 @@ def main() -> None:
     cur = conn.cursor()
     print(f"Connected to PostgreSQL database '{settings.postgres_db}'\n")
 
-    user_inserted = False
-    role_inserted = False
+    results: list[tuple[SeedUser, bool, bool]] = []
 
     try:
-        # 4. Check if user exists
-        cur.execute(
-            "SELECT id FROM public.tbl_users WHERE user_name = %s",
-            (USER_NAME,),
-        )
-        if cur.fetchone():
-            print(f"User '{USER_NAME}' already exists — skipping tbl_users insert")
-        else:
-            cur.execute(
-                "INSERT INTO public.tbl_users (user_name, email_id, tenant, password, status) "
-                "VALUES (%s, %s, %s, %s, %s)",
-                (USER_NAME, EMAIL, TENANT, hashed_password, STATUS),
-            )
-            user_inserted = True
-            print(f"Inserted user '{USER_NAME}' into public.tbl_users")
+        for user in USERS_TO_SEED:
+            user_inserted, role_inserted = seed_user(cur, user)
+            results.append((user, user_inserted, role_inserted))
+            print()
 
-        # 5. Check if role exists
-        cur.execute(
-            "SELECT slno FROM public.tbl_user_roles WHERE user_name = %s",
-            (USER_NAME,),
-        )
-        if cur.fetchone():
-            print(f"Role for '{USER_NAME}' already exists — skipping tbl_user_roles insert")
-        else:
-            cur.execute(
-                "INSERT INTO public.tbl_user_roles "
-                "(first_name, last_name, email_id, user_name, tenant, role, created_by, created_date) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, NOW())",
-                (FIRST_NAME, LAST_NAME, EMAIL, USER_NAME, TENANT, ROLE, CREATED_BY),
-            )
-            role_inserted = True
-            print(f"Inserted role '{ROLE}' for '{USER_NAME}' into public.tbl_user_roles")
-
-        # 6. Commit the transaction
         conn.commit()
-        print("\nTransaction committed.")
+        print("Transaction committed.\n")
 
-        # 7. Summary
-        print("\n--- Summary ---")
-        print(f"  tbl_users:      {'INSERTED' if user_inserted else 'SKIPPED (already exists)'}")
-        print(f"  tbl_user_roles: {'INSERTED' if role_inserted else 'SKIPPED (already exists)'}")
+        # Summary
+        print("--- Summary ---")
+        for user, user_inserted, role_inserted in results:
+            u = "INSERTED" if user_inserted else "SKIPPED (already exists)"
+            r = "INSERTED" if role_inserted else "SKIPPED (already exists)"
+            print(f"  {user.user_name:15s}  tbl_users: {u:28s}  tbl_user_roles: {r}")
 
     except Exception as exc:
         conn.rollback()

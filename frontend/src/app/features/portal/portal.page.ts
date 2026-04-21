@@ -65,6 +65,12 @@ export class PortalPage {
   protected readonly user = this.#auth.user;
   protected readonly firstName = computed(() => this.user().name.split(' ')[0]);
 
+  constructor() {
+    if (!this.#store.hasLoaded()) {
+      this.#store.refresh();
+    }
+  }
+
   protected readonly recent = this.#store.recent;
   protected readonly openCount = computed(() => {
     const s = this.#store.stats();

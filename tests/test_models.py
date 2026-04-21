@@ -455,6 +455,7 @@ class TestTriageModels:
         package = TriagePackage(
             query_id="VQ-2026-0001",
             correlation_id="corr-001",
+            callback_token="cb-token-abc-123",
             original_query=UnifiedQueryPayload(
                 query_id="VQ-2026-0001",
                 correlation_id="corr-001",
@@ -469,6 +470,7 @@ class TestTriageModels:
             created_at=NOW,
         )
         assert package.query_id == "VQ-2026-0001"
+        assert package.callback_token == "cb-token-abc-123"
 
     def test_valid_reviewer_decision(self):
         decision = ReviewerDecision(

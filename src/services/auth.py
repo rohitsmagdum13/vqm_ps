@@ -39,6 +39,24 @@ logger = structlog.get_logger(__name__)
 # every function call while keeping the dependency explicit.
 _pg: PostgresConnector | None = None
 
+# Dev-mode mapping from seeded username to vendor_id. tbl_users does not
+# store a vendor_id column yet — this dict is the bridge so the portal
+# can filter GET /queries by the caller's vendor. Replace with a DB
+# column or a Salesforce contact lookup in production.
+USER_TO_VENDOR_ID: dict[str, str] = {
+    "sneha.singh": "V-001",
+    "dinesh.chauhan": "V-002",
+    "deepak.reddy": "V-003",
+    "vendor_user": "V-001",
+}
+
+
+def resolve_vendor_id(user_name: str, role: str) -> str | None:
+    """Return the vendor_id for a user, or None if role is not VENDOR."""
+    if role != "VENDOR":
+        return None
+    return USER_TO_VENDOR_ID.get(user_name)
+
 
 def init_auth_service(pg: PostgresConnector) -> None:
     """Initialize the auth service with a PostgresConnector.
@@ -174,7 +192,7 @@ async def authenticate_user(
         email=user_row["email_id"],
         role=role,
         tenant=tenant,
-        vendor_id=None,
+        vendor_id=resolve_vendor_id(user_row["user_name"], role),
     )
 
 

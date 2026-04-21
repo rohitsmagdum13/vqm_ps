@@ -25,6 +25,7 @@ export class AuthService {
     if (!s) return 'vendor';
     return mapBackendRole(s.role) ?? 'vendor';
   });
+  readonly vendorId = computed<string | null>(() => this.#session()?.vendorId ?? null);
 
   readonly user = computed<User>(() => {
     const s = this.#session();

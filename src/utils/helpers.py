@@ -50,6 +50,34 @@ class TimeHelper:
         return TimeHelper.ist_now() + timedelta(hours=hours)
 
 
+class DateHelper:
+    """Date arithmetic helpers for business-day calculations.
+
+    Phase 6 uses this for the 5-business-day auto-close timer.
+    The dev-mode implementation skips weekends only — no holiday
+    calendar. Production would swap in a region-aware calendar.
+    """
+
+    @staticmethod
+    def add_business_days(start_dt: datetime, days: int) -> datetime:
+        """Return start_dt advanced by `days` business days (Mon-Fri).
+
+        Saturday (weekday=5) and Sunday (weekday=6) are skipped.
+        A call with days=0 returns start_dt unchanged. Negative days
+        are not supported in Phase 6.
+        """
+        if days < 0:
+            raise ValueError("days must be non-negative")
+
+        current = start_dt
+        remaining = days
+        while remaining > 0:
+            current = current + timedelta(days=1)
+            if current.weekday() < 5:
+                remaining -= 1
+        return current
+
+
 class IdGenerator:
     """Unique ID generation for VQMS entities.
 

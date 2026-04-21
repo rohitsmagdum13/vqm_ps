@@ -83,13 +83,18 @@ class RoutingNode:
     based on query category, vendor tier, and urgency level.
     """
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, postgres=None) -> None:
         """Initialize with SLA configuration from settings.
 
         Args:
             settings: Application settings with SLA thresholds.
+            postgres: Optional PostgresConnector. When provided, the
+                SLA checkpoint row is inserted here so the SlaMonitor
+                can pick it up. Optional to keep unit tests that only
+                exercise routing logic independent of the DB layer.
         """
         self._settings = settings
+        self._postgres = postgres
 
     async def execute(self, state: PipelineState) -> PipelineState:
         """Apply routing rules and produce a RoutingDecision.
@@ -160,8 +165,60 @@ class RoutingNode:
             correlation_id=correlation_id,
         )
 
+        # Phase 6: register this query with the SLA monitor so the
+        # background SlaMonitor can fire warning / escalation events.
+        # Non-critical — routing must not block on a DB failure.
+        await self._write_sla_checkpoint(
+            query_id=state.get("query_id", ""),
+            correlation_id=correlation_id,
+            sla_target_hours=total_hours,
+        )
+
         return {
             "routing_decision": routing_decision.model_dump(),
             "status": "ROUTING",
             "updated_at": TimeHelper.ist_now().isoformat(),
         }
+
+    async def _write_sla_checkpoint(
+        self,
+        *,
+        query_id: str,
+        correlation_id: str,
+        sla_target_hours: int,
+    ) -> None:
+        """Insert a row into workflow.sla_checkpoints for the SLA monitor.
+
+        Non-critical: we log and continue on any failure so a DB hiccup
+        cannot derail the pipeline. If the row is missing, the monitor
+        simply won't scan this query — worst case is a missed escalation
+        event, which is acceptable in dev mode.
+        """
+        if not self._postgres or not query_id:
+            return
+
+        now = TimeHelper.ist_now()
+        deadline = TimeHelper.ist_now_offset(hours=sla_target_hours)
+        try:
+            await self._postgres.execute(
+                """
+                INSERT INTO workflow.sla_checkpoints (
+                    query_id, correlation_id, sla_started_at, sla_deadline,
+                    sla_target_hours, last_status, created_at, updated_at
+                )
+                VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, $6)
+                ON CONFLICT (query_id) DO NOTHING
+                """,
+                query_id,
+                correlation_id,
+                now,
+                deadline,
+                sla_target_hours,
+                now,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write SLA checkpoint — continuing (non-critical)",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )

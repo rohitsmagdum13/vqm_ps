@@ -221,3 +221,115 @@
 - [x] Update Flow.md with Steps 10A, 10B, 11, 12, ServiceNow connector
 - [x] Update README.md with Phase 4 status
 - [x] Update tasks/todo.md
+
+---
+
+## Phase 5: Human Review and Path C (Steps 8C.1-8C.3) — COMPLETE
+
+Gate criteria met:
+- Workflow pauses when confidence < 0.85 (status=PAUSED, processing_path=C)
+- TriagePackage persisted with all required fields (callback_token, original_query, analysis_result, suggested_routing, confidence_breakdown, created_at)
+- Reviewer corrections re-enqueue the query to the intake SQS with `resume_context.from_triage=True`, so context_loading re-runs with high confidence and flows into Path A or B naturally
+- Graceful degradation: SQS unavailable → audit trail still persisted, `resume_method="db_only"` returned
+- Security: `reviewer_id` always taken from JWT sub, never from request body
+
+### Step 1: Data Model
+- [x] Add `callback_token: str` to TriagePackage; make `suggested_routing` optional
+- [x] Add frozen TriageQueueItem model for queue listings
+- [x] Add migration `011_create_triage_tables.sql` (workflow.triage_packages, workflow.reviewer_decisions + indexes)
+
+### Step 2: Triage Node (Path C pause)
+- [x] Build `src/orchestration/nodes/triage.py` — TriageNode.execute(state)
+- [x] Persist package (INSERT ON CONFLICT DO NOTHING) — critical
+- [x] Update case_execution to PAUSED — critical
+- [x] Publish HumanReviewRequired event — non-critical (graceful degradation)
+- [x] Heuristic `_build_confidence_breakdown()` for reviewer context
+- [x] Write tests/test_triage_node.py (6 tests — happy, no-EB, EB failure, postgres failure, breakdown)
+
+### Step 3: Triage Service (Queue + Decision)
+- [x] Build `src/services/triage.py` — TriageService
+- [x] `list_pending(limit)` — clamp limit to [1, 200], oldest first
+- [x] `get_package(query_id)` — raise TriagePackageNotFoundError on miss
+- [x] `submit_decision(query_id, decision)` — verify PENDING, insert audit row, flip package, apply corrections, update case_execution, re-enqueue SQS, publish HumanReviewCompleted
+- [x] `_apply_corrections()` — immutable dict copy, confidence override or 1.0, stamp human_validated=True
+- [x] `_reenqueue()` — SQS send with resume_context, fallback to "db_only" on failure
+- [x] Write tests/test_triage_service.py (13 tests — list + clamp params + get + submit happy/missing/reviewed + sqs fallbacks + corrections)
+
+### Step 4: Triage Routes (Reviewer API)
+- [x] Build `src/api/routes/triage.py` — APIRouter with prefix=/triage
+- [x] `_require_reviewer(request)` — 403 unless role in {REVIEWER, ADMIN}
+- [x] ReviewerDecisionRequest with `confidence_override ∈ [0.0, 1.0]` and `reviewer_notes` min_length=1
+- [x] GET /triage/queue, GET /triage/{query_id}, POST /triage/{query_id}/review
+- [x] `reviewer_id` sourced from `request.state.username` (JWT sub), never from body
+- [x] Write tests/test_triage_routes.py (17 tests — auth guards × 6, list × 2, detail × 2, review × 7 including JWT-over-body security test)
+
+### Step 5: Wire Phase 5 into Graph
+- [x] Remove triage_placeholder from graph.py
+- [x] Register real TriageNode via dependencies.py (with eventbridge injection)
+- [x] Update app/lifespan.py to instantiate TriageService on state
+- [x] Update app/routes.py to register triage_router
+- [x] Update tests/test_graph.py Path A/B/C to assert triage invocation only on Path C
+
+### Step 6: Gate Check
+- [x] uv run ruff check . — clean
+- [x] uv run pytest tests/test_graph.py tests/test_triage_node.py tests/test_triage_service.py tests/test_triage_routes.py — all 43 green
+- [x] uv run pytest — 408 pass (50 new Phase 5 tests), 3 pre-existing failures unrelated to Phase 5
+- [x] Update Flow.md with Path C section (8C.1, 8C.2, 8C.3 + resume-via-SQS)
+- [x] Update README.md (Phase 5 complete, triage endpoints in API table)
+- [x] Update tasks/todo.md (this entry)
+
+---
+
+## Phase 6: SLA Monitoring and Closure (Steps 13-16) — COMPLETE
+
+Gate criteria met:
+- SLA escalation fires at correct thresholds (70% / 85% / 95%) and is idempotent via per-threshold boolean flags
+- Path B end-to-end works: ServiceNow webhook → SQS re-enqueue → graph entry-switch → resolution_from_notes → quality_gate → delivery → ResolutionPrepared event + email sent + closure_tracking row
+- Closure works in all three ways: confirmation keyword match on reply, AutoCloseScheduler sweep at business-day deadline, force-close
+- Reopen inside `closure_reopen_window_days` flips case to AWAITING_RESOLUTION and re-enqueues; outside window creates a new linked query_id via `case_execution.linked_query_id`
+- Episodic memory row persisted on every closure (vendor_id, query_id, intent, resolution_path, outcome, resolved_at, summary) — visible to `context_loading._load_episodic_memory()` on next query
+
+### Workstream A: SLA Monitor
+- [x] Migration `012_create_sla_tracking.sql` — `workflow.sla_checkpoints` + `workflow.closure_tracking` + `case_execution.linked_query_id` + `idx_sla_active`
+- [x] `src/models/sla.py` — `SlaCheckpoint` frozen Pydantic + `SlaThresholdCrossed` enum
+- [x] `src/services/sla_monitor.py` — `SlaMonitor` asyncio task loop with start/stop/tick; flag-driven idempotency
+- [x] Wire into `src/orchestration/nodes/routing.py` — non-critical INSERT to `sla_checkpoints` after computing SLATarget
+- [x] Wire into `app/lifespan.py` — instantiate + start/stop on application state
+- [x] Tests: `tests/test_sla_monitor.py`
+
+### Workstream B: Path B Resolution Flow (Step 15)
+- [x] `src/orchestration/nodes/resolution_from_notes.py` — `ResolutionFromNotesNode.execute()` with tier-aware SLA statements
+- [x] Update `src/orchestration/nodes/delivery.py` — `resolution_mode` branch (skip ticket creation, reuse INC, update ServiceNow to AWAITING_VENDOR_CONFIRMATION, use vendor_context.email_address)
+- [x] Update `src/models/workflow.py` — add `resolution_mode` and `work_notes` to `PipelineState` TypedDict
+- [x] Add `POST /webhooks/servicenow` handler in `src/api/routes/webhooks.py` with `ServiceNowWebhookPayload`
+- [x] Update `src/orchestration/sqs_consumer.py` — carry `resume_context.action` into initial state
+- [x] Update `src/orchestration/graph.py` — entry passthrough + `route_from_entry` conditional edge for `resume_context.action == "prepare_resolution"`
+- [x] Update `src/orchestration/dependencies.py` — instantiate + inject `ResolutionFromNotesNode`
+- [x] Tests: `tests/test_resolution_from_notes_node.py` (16 tests), `tests/test_servicenow_webhook.py` (12 tests), `tests/test_graph.py` (2 new tests for Step 15 branch)
+
+### Workstream C: Closure Logic
+- [x] `src/services/closure.py` — `ClosureService` with `register_resolution_sent`, `detect_confirmation`, `close_case`, `handle_reopen`
+- [x] `src/services/auto_close_scheduler.py` — `AutoCloseScheduler` asyncio task loop (same shape as SlaMonitor)
+- [x] Hook into `src/services/email_intake/service.py` — call `detect_confirmation` / `handle_reopen` after thread correlation
+- [x] `src/utils/helpers.py` — `DateHelper.add_business_days` (skips Sat/Sun)
+- [x] `config/settings.py` — `auto_close_business_days=5`, `closure_reopen_window_days=7`, `sla_monitor_interval_seconds=60`, `auto_close_interval_seconds=3600`, `confirmation_keywords=[...]`
+- [x] Wire into `app/lifespan.py` — instantiate `ClosureService`, start/stop `AutoCloseScheduler`
+- [x] Tests: `tests/test_closure_service.py`, `tests/test_auto_close_scheduler.py`
+
+### Workstream D: Episodic Memory Writer
+- [x] `src/services/episodic_memory.py` — `EpisodicMemoryWriter.save_closure()` with deterministic dev-mode summary
+- [x] Integration: `ClosureService.close_case` calls `save_closure` after ServiceNow update + TicketClosed event
+- [x] Non-critical: try/except around memory write, closure succeeds even on memory failure
+- [x] Tests: `tests/test_episodic_memory.py`
+
+### Gate Check
+- [x] uv run ruff check . — clean (zero warnings)
+- [x] uv run pytest tests/test_sla_monitor.py tests/test_closure_service.py tests/test_auto_close_scheduler.py tests/test_episodic_memory.py tests/test_resolution_from_notes_node.py tests/test_servicenow_webhook.py tests/test_graph.py -v — all green
+- [x] uv run pytest — 492 pass, 3 pre-existing failures unrelated to Phase 6 (portal_intake db_write, 2 X-Vendor-ID tests)
+- [x] Update Flow.md with Step 13 (SLA Monitor), Step 15 (resolution-from-notes), Step 16 (closure + auto-close + reopen), episodic memory write-back
+- [x] Update README.md — Phase 6 complete, Phase 6 capabilities block, `/webhooks/servicenow` in API table
+- [x] Update tasks/todo.md (this entry)
+
+---
+
+## Current Phase: 7 — Frontend Portal (Angular)

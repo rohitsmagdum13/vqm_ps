@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } from '@angular/core';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
@@ -155,12 +155,15 @@ export class QueryDetailPage {
   readonly #params = toSignal(inject(ActivatedRoute).paramMap);
 
   protected readonly id = computed(() => this.#params()?.get('id') ?? '');
-  protected readonly query = computed(() => {
-    const list = this.#store.queries();
-    const target = this.id();
-    return list.find((q) => q.id === target);
-  });
+  protected readonly query = computed(() => this.#store.selected());
   protected readonly sending = signal(false);
+
+  constructor() {
+    effect(() => {
+      const target = this.id();
+      if (target) this.#store.loadDetail(target);
+    });
+  }
 
   protected readonly reply = new FormControl<string>('', {
     nonNullable: true,

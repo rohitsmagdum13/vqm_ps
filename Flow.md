@@ -2,9 +2,9 @@
 
 _This file traces exactly how a vendor query moves through the codebase. Updated after every phase._
 
-## Current State: Phase 4 — Response Generation and Delivery (Complete)
+## Current State: Phase 5 — Human Review and Path C (Complete)
 
-Phases 1-4 are complete. Both entry points produce messages on SQS. The LangGraph pipeline consumes them, runs query analysis (LLM Call #1), confidence gating, routing, KB search, path decision, response drafting (LLM Call #2), quality gate validation, ServiceNow ticket creation, and email delivery. All three processing paths (A, B, C) are wired with real nodes (except triage placeholder for Phase 5). 358 tests pass.
+Phases 1-5 are complete. Both entry points produce messages on SQS. The LangGraph pipeline consumes them, runs query analysis (LLM Call #1), confidence gating, routing, KB search, path decision, response drafting (LLM Call #2), quality gate validation, ServiceNow ticket creation, and email delivery. Low-confidence queries now route to Path C: the triage node persists a TriagePackage, PAUSES the workflow, and publishes HumanReviewRequired. A human reviewer submits corrections via `/triage/{id}/review`, which re-enqueues the query onto `sqs_query_intake_queue_url` with `resume_context.from_triage=True` so the standard pipeline restarts from context_loading with high confidence. All 11 pipeline nodes are real (no placeholders). 408 tests pass (3 unrelated pre-existing failures in portal_intake and queries routes).
 
 ---
 
@@ -172,11 +172,11 @@ All external system interactions go through connectors in `src/connectors/`. Eve
 
 File: `src/orchestration/graph.py` -> `build_pipeline_graph()`
 
-The LangGraph orchestrator wires 10 real nodes + 1 placeholder (triage) into a StateGraph. The SQS consumer (`src/orchestration/sqs_consumer.py` -> `PipelineConsumer`) pulls messages from both intake queues and feeds them into the graph.
+The LangGraph orchestrator wires 11 real nodes into a StateGraph. The SQS consumer (`src/orchestration/sqs_consumer.py` -> `PipelineConsumer`) pulls messages from both intake queues and feeds them into the graph.
 
 ```
 START → context_loading → query_analysis → confidence_check
-    ─(processing_path=="C")─→ triage [STUB — Phase 5] → END
+    ─(processing_path=="C")─→ triage → END (workflow PAUSED, resumed via reviewer API)
     ─(else)─→ routing → kb_search → path_decision
         ─(processing_path=="A")─→ resolution → quality_gate → delivery → END
         ─(processing_path=="B")─→ acknowledgment → quality_gate → delivery → END
@@ -492,11 +492,271 @@ File: `src/api/routes/vendors.py` -> `update_vendor()`
 
 ---
 
+## Path C — Low-Confidence Human Review (Steps 8C.1 → 8C.3)
+
+When Query Analysis confidence is < 0.85, the pipeline pauses for a human reviewer to correct the AI's interpretation before any ticket is created or email is sent. Path C is **workflow-preserving**: the reviewer's corrections re-enter the standard pipeline, so Path A / Path B decisions happen exactly like they would on a high-confidence query.
+
+### Step 8C.1: Triage Node — persist and pause
+
+File: `src/orchestration/nodes/triage.py` -> `TriageNode.execute(state)`
+
+**Input:** PipelineState with `analysis_result.confidence_score < 0.85`
+**Output:** `{triage_package: dict, status: "PAUSED", updated_at}`
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `IdGenerator.generate_correlation_id()` | Generate `callback_token` (UUID) — the resume handle |
+| 2 | `_build_confidence_breakdown()` | Decompose overall confidence into intent / entity / single-issue heuristics so the reviewer sees where the AI was weak |
+| 3 | Build `TriagePackage` dict | Combines original_query + analysis_result + suggested_routing (may be None) + confidence_breakdown + callback_token |
+| 4 | `postgres.execute(INSERT ... ON CONFLICT DO NOTHING)` into `workflow.triage_packages` | **Critical** — failure propagates, SQS retries, eventually DLQ |
+| 5 | `postgres.execute(UPDATE workflow.case_execution SET status='PAUSED', processing_path='C')` | Mark the case paused |
+| 6 | `eventbridge.publish_event("HumanReviewRequired", ...)` | **Non-critical** — logged warning on failure, pipeline continues |
+| 7 | Return state update with `status="PAUSED"` | StateGraph terminates at this node for Path C |
+
+### Step 8C.2: Reviewer Queue & Detail (GET endpoints)
+
+File: `src/api/routes/triage.py` -> `list_triage_queue()`, `get_triage_package()`
+
+**Auth:** Bearer JWT. `_require_reviewer(request)` rejects with 403 unless role ∈ {REVIEWER, ADMIN} (extracted from `request.state.role`).
+
+| Endpoint | Handler | Service call | Response |
+|----------|---------|--------------|----------|
+| `GET /triage/queue?limit=50` | `list_triage_queue` | `triage_service.list_pending(limit)` — reads `workflow.triage_packages WHERE status='PENDING' ORDER BY created_at ASC`, limit clamped to [1, 200] | `{"packages": [TriageQueueItem, ...]}` |
+| `GET /triage/{query_id}` | `get_triage_package` | `triage_service.get_package(query_id)` — returns full TriagePackage. `TriagePackageNotFoundError` → 404 | `TriagePackage` JSON |
+
+### Step 8C.3: Reviewer Decision & Workflow Resume
+
+File: `src/api/routes/triage.py` -> `submit_triage_review()` + `src/services/triage.py` -> `TriageService.submit_decision()`
+
+**Auth:** Same reviewer guard. **Security invariant:** `reviewer_id` is always taken from `request.state.username` (JWT sub claim), NEVER from the request body — matches the vendor_id rule.
+
+**Input:** `ReviewerDecisionRequest` — `corrected_intent?`, `corrected_vendor_id?`, `corrected_routing?`, `confidence_override? ∈ [0.0, 1.0]`, `reviewer_notes` (min_length=1)
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `postgres.fetchrow("SELECT status FROM workflow.triage_packages WHERE query_id=$1")` | Verify row exists (`TriagePackageNotFoundError` → 404) and status is PENDING (`TriageAlreadyReviewedError` → 409) |
+| 2 | `postgres.execute(INSERT INTO workflow.reviewer_decisions ...)` | **Audit trail first** — decision row is always written, even if downstream resume fails |
+| 3 | `postgres.execute(UPDATE workflow.triage_packages SET status='REVIEWED', reviewed_at, reviewed_by)` | Flip package state |
+| 4 | `_apply_corrections(analysis_result, decision)` | Build a **new** dict from analysis_result (no mutation), apply corrected_intent / corrected_vendor_id, set `confidence_score` to `decision.confidence_override` or `1.0`, stamp `human_validated=True` and `reviewer_id` |
+| 5 | `postgres.execute(UPDATE workflow.case_execution SET analysis_result=$1, status='ANALYZED')` | Persist corrected analysis back into the case |
+| 6 | `_reenqueue(query_id, corrected_analysis, correlation_id)` | Send SQS message to `sqs_query_intake_queue_url` with `resume_context={"from_triage": True, "reviewer_id": ..., "callback_token": ...}` and `corrected_analysis` payload. Falls back to `resume_method="db_only"` when SQS is None or `send_message` raises |
+| 7 | `eventbridge.publish_event("HumanReviewCompleted", ...)` | **Non-critical** |
+
+**Response:** `{status: "REVIEWED", query_id, resume_method: "sqs" | "db_only"}`
+
+**On resume:** The SQS consumer picks up the corrected-analysis message and re-enters `context_loading`. Because `confidence_score` is now 1.0 (or the reviewer's override), `confidence_check` sends the query down the standard routing + kb_search branch, naturally flowing into Path A or Path B based on KB match quality. The reviewer's decision therefore acts exactly like a high-confidence result from the AI — no parallel "reviewed" branch exists in the graph.
+
+**SLA note (Phase 6 will enforce):** The SLA clock starts AFTER review completes, not at query receipt. Review time does not count against SLA.
+
+### Data model (migration 011)
+
+`src/db/migrations/011_create_triage_tables.sql` creates:
+
+- `workflow.triage_packages` — `query_id UNIQUE`, `callback_token UNIQUE`, `package_data JSONB`, `status`, `original_confidence`, `suggested_category`, `created_at`, `reviewed_at`, `reviewed_by`
+- `workflow.reviewer_decisions` — `query_id`, `reviewer_id`, `decision_data JSONB`, `corrected_intent`, `corrected_vendor_id`, `confidence_override`, `reviewer_notes`, `decided_at`
+- Indexes: `idx_triage_status_created`, `idx_triage_callback_token`, `idx_reviewer_decisions_query`, `idx_reviewer_decisions_reviewer`
+
+---
+
+## Phase 6 — SLA Monitoring, Path B Resolution, Closure
+
+Phase 6 closes the gap on *time* and *closure*. Phase 5 made sure low-confidence queries get a human review before drafting. Phase 6 makes sure every case either resolves on time or gets escalated, and every closed case feeds future queries via episodic memory.
+
+### Step 13: SLA Monitor — background tick loop
+
+File: `src/services/sla_monitor.py` -> `SlaMonitor.tick()`
+
+**What triggers it:** `app/lifespan.py` starts `SlaMonitor` on FastAPI startup. The service runs `tick()` every `settings.sla_monitor_interval_seconds` (default 60s) via an asyncio task loop. Graceful shutdown on `CancelledError`.
+
+**Input:** None — reads `workflow.sla_checkpoints` directly
+**Output:** Publishes `SLAWarning70` / `SLAEscalation85` / `SLAEscalation95` events, flips flags in `workflow.sla_checkpoints`
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | Checkpoint row was INSERTed by `RoutingNode.execute()` at Step 9A — every case with an SLA target writes a `workflow.sla_checkpoints` row with `sla_deadline = ist_now() + sla_target_hours`, `warning_fired=false`, `l1_fired=false`, `l2_fired=false`, `last_status=ACTIVE` | Non-critical in routing — if this write fails, routing continues; SLA monitor will simply not see the case |
+| 2 | `postgres.fetch("SELECT * FROM workflow.sla_checkpoints WHERE last_status = 'ACTIVE' AND sla_deadline IS NOT NULL")` | Active cases only. A case becomes INACTIVE when ClosureService marks it CLOSED |
+| 3 | For each row: compute `elapsed_pct = (now - sla_started_at) / (sla_deadline - sla_started_at) * 100` | Raw elapsed percentage, capped at 100 |
+| 4 | Threshold checks (ordered): `elapsed_pct >= 95 and not l2_fired` → publish `SLAEscalation95`, UPDATE `l2_fired=true`. Same for L1 (85%) and WARNING (70%) | Each threshold is its own event. Publishing is **non-critical** — if EventBridge fails the flag is NOT flipped so the next tick retries |
+| 5 | `eventbridge.publish_event(event_type, payload={query_id, sla_deadline, elapsed_pct, ...})` | Event published, downstream consumers (dashboards, escalation routing) react |
+
+**Idempotency:** Column-flag driven — once a flag is TRUE, that threshold will not re-fire for this case. `warning_fired`, `l1_fired`, `l2_fired` are boolean flags that only flip once.
+
+**Analytics projection:** `reporting.sla_metrics` continues to store the wide analytics row. `workflow.sla_checkpoints` is the live scheduler state only.
+
+### Step 15: Path B Resolution from ServiceNow Notes
+
+When the human team finishes investigating a Path B ticket, ServiceNow hits our webhook, we fetch the team's work notes, and the Communication Agent drafts a resolution email from those notes. The key trick: we re-enter the existing LangGraph pipeline at a new branch rather than building a second pipeline.
+
+#### Step 15.1: ServiceNow webhook receiver
+
+File: `src/api/routes/webhooks.py` -> `servicenow_webhook()`
+
+**Auth:** `/webhooks/` in middleware `SKIP_PATHS` — no JWT required (ServiceNow can't send Bearer tokens)
+**Input:** `ServiceNowWebhookPayload` — `ticket_id` (required), `status` (required), `correlation_id` (optional)
+**Output:** `{status: "enqueued" | "ignored" | "error", query_id?, reason?}`
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `status.upper()` → only process `"RESOLVED"` | Any other status returns `{"status": "ignored"}` with reason |
+| 2 | `postgres.fetchrow("SELECT query_id FROM workflow.ticket_link WHERE ticket_number = $1")` | Map ServiceNow INC to our query_id. Missing → `{"status": "error", "reason": "ticket_not_found"}` |
+| 3 | `postgres.fetchrow("SELECT query_id, correlation_id, execution_id, source, analysis_result, vendor_id FROM workflow.case_execution WHERE query_id = $1")` | Pull the case's stable correlation_id (overrides webhook payload's if present) |
+| 4 | Build `resume_message`: `{query_id, vendor_id, correlation_id, execution_id, source, resume_context: {action: "prepare_resolution", from_servicenow: True, ticket_id}, analysis_result}` | Uses the case's original correlation_id for trace continuity |
+| 5 | `sqs.send_message(settings.sqs_query_intake_queue_url, resume_message, correlation_id=...)` | Re-enter the pipeline via the intake queue. Missing queue URL → `{"status": "error"}` (no 500) |
+
+#### Step 15.2: Graph entry-switch routes resume-message to resolution-from-notes branch
+
+File: `src/orchestration/graph.py` -> `route_from_entry(state)` + `build_pipeline_graph()`
+
+The graph has a tiny passthrough entry node that reads `state["resume_context"]` and picks the branch:
+
+- `resume_context.action == "prepare_resolution"` → skip intake nodes entirely, jump to `resolution_from_notes`
+- else (including missing resume_context, triage resume, or first-time new query) → normal path into `context_loading`
+
+The resolution branch path: `entry → resolution_from_notes → quality_gate → delivery → END`. `kb_search`, `routing`, `resolution`, `acknowledgment`, `triage`, and `context_loading` are all skipped — the analysis_result and vendor_context were already computed on the original pass.
+
+#### Step 15.3: ResolutionFromNotesNode — draft resolution from work notes
+
+File: `src/orchestration/nodes/resolution_from_notes.py` -> `ResolutionFromNotesNode.execute(state)`
+
+**Input:** PipelineState with `ticket_info.ticket_number`, `vendor_context`, `unified_payload`, `analysis_result`, `resume_context.action=prepare_resolution`
+**Output:** `{draft_response: DraftResponse, work_notes: str, status: "VALIDATING", updated_at}` on success OR `{draft_response: None, status: "DRAFT_FAILED", error, updated_at}` on failure
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | Read `ticket_info.ticket_number` — missing → DRAFT_FAILED with "missing_ticket_number" | Early return, no ServiceNow / LLM calls |
+| 2 | `servicenow.get_work_notes(ticket_number)` wrapped in try/except | **Non-critical** — on failure, `work_notes = "No investigation notes were provided."` so the LLM still produces a reasonable draft |
+| 3 | Build prompt variables: `vendor_name`, `vendor_tier` (drives `SLA_STATEMENTS` → `"Our Gold-tier team has completed the investigation..."` for GOLD), `intent`, `subject`, `ticket_number`, `work_notes` | Tier-aware phrasing (PLATINUM / GOLD / SILVER / BRONZE) |
+| 4 | `prompt_manager.render("resolution_from_notes_v1", **vars)` | Jinja2 StrictUndefined — any missing var raises |
+| 5 | `llm_gateway.llm_complete(prompt, temperature=0.3)` wrapped in try/except | LLM failure → DRAFT_FAILED; no retry here (LLM Gateway already has retry) |
+| 6 | Parse JSON response → `DraftResponse` (subject, body_html, confidence, sources) | JSON parse or Pydantic validation failure → DRAFT_FAILED |
+| 7 | Return `{draft_response, work_notes, status: "VALIDATING", updated_at: ist_now()}` | Hand off to Quality Gate |
+
+#### Step 15.4: Quality Gate + Delivery — reuse existing ticket
+
+The Quality Gate runs the same 7 checks (it doesn't care whether we're first-send or resolution-from-notes). Delivery branches on `state.get("resolution_mode")`:
+
+| Condition | What delivery does |
+|-----------|---------------------|
+| `resolution_mode` truthy (Step 15) | SKIP `_create_ticket()` — reuse `ticket_info.ticket_number` from state; call `servicenow.update_ticket_status(ticket_id, "AWAITING_VENDOR_CONFIRMATION", work_notes=...)`; publish `ResolutionPrepared`; send email to `vendor_context.email_address` (portal-origin queries have no `unified_payload.sender_email`); then call `closure_service.register_resolution_sent(query_id, correlation_id)` to start the 5-business-day auto-close timer |
+| First send (Path A or Path B ack) | Unchanged — create ticket, send email, then `register_resolution_sent` |
+
+### Step 16: Closure, Reopen, and Auto-close
+
+File: `src/services/closure.py` -> `ClosureService`
+
+Three ways a case can close:
+
+1. **Vendor confirmation** — vendor replies with "thanks" / "resolved" / "fixed" etc. (`settings.confirmation_keywords`)
+2. **Auto-close** — 5 business days pass with no reply
+3. **Admin force-close** — direct `close_case()` call
+
+And two ways a closed case can re-open:
+
+1. **Inside `settings.closure_reopen_window_days`** (default 7 days) — flip case back to `AWAITING_RESOLUTION`, re-enqueue to intake with `resume_context.is_reopen=True`, publish `TicketReopened`
+2. **Outside the window** — create a new query_id via standard intake; link via `workflow.case_execution.linked_query_id`
+
+#### Step 16.1: register_resolution_sent
+
+Called from `delivery.py` on successful email send. INSERT into `workflow.closure_tracking`:
+- `query_id` (PK), `resolution_sent_at = ist_now()`, `auto_close_deadline = DateHelper.add_business_days(ist_now(), 5)` (skips Sat/Sun; no holiday calendar in dev)
+
+#### Step 16.2: detect_confirmation
+
+Called from `src/services/email_intake/service.py` after thread correlation returns `REPLY_TO_CLOSED` or `EXISTING_OPEN`:
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | Look up `closure_tracking` by original query_id | Skip if no row or already closed |
+| 2 | Lowercase email body, search for any keyword from `settings.confirmation_keywords` | `{"thanks", "thank you", "resolved", "fixed", "that worked", "works now", "appreciate it"}` |
+| 3 | If matched → `close_case(query_id, reason="VENDOR_CONFIRMED")` | Standard closure flow |
+| 4 | If `REPLY_TO_CLOSED` and NOT a confirmation → `handle_reopen(query_id, new_email_payload, correlation_id)` | Reopen logic (inside vs outside window) |
+
+Non-critical: closure detection failure must not block email ingestion.
+
+#### Step 16.3: close_case (single write path)
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `postgres.execute("UPDATE workflow.case_execution SET status='CLOSED', closed_at=$2 WHERE query_id=$1")` | Flip case state |
+| 2 | `postgres.execute("UPDATE workflow.closure_tracking SET closed_at=$2, closed_reason=$3 WHERE query_id=$1")` | Record reason (VENDOR_CONFIRMED / AUTO_CLOSED / REOPENED) |
+| 3 | `postgres.execute("UPDATE workflow.sla_checkpoints SET last_status='CLOSED' WHERE query_id=$1")` | SLA monitor will skip this case on its next tick |
+| 4 | `servicenow.update_ticket_status(ticket_id, "Closed", work_notes=f"Closed by VQMS: {reason}")` | Update ITSM side |
+| 5 | `eventbridge.publish_event("TicketClosed", ...)` | **Non-critical** — logged warning on failure |
+| 6 | `episodic_memory_writer.save_closure(query_id, correlation_id)` | See Step 16.5 below |
+
+#### Step 16.4: AutoCloseScheduler — background sweep
+
+File: `src/services/auto_close_scheduler.py` -> `AutoCloseScheduler.tick()`
+
+Same asyncio-loop shape as SlaMonitor. Tick every `settings.auto_close_interval_seconds` (default 3600s = 1 hour):
+
+```sql
+SELECT query_id FROM workflow.closure_tracking
+WHERE closed_at IS NULL AND auto_close_deadline <= now()
+```
+
+For each row: `closure_service.close_case(query_id, reason="AUTO_CLOSED", correlation_id=...)`.
+
+#### Step 16.5: Episodic Memory Writer
+
+File: `src/services/episodic_memory.py` -> `EpisodicMemoryWriter.save_closure()`
+
+**Input:** `query_id`, `correlation_id`
+**Output:** One new row in `memory.episodic_memory` (or a logged warning on failure — closure still succeeds)
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `postgres.fetchrow("SELECT vendor_id, intent, processing_path, status, created_at FROM workflow.case_execution WHERE query_id = $1")` | Pull the case's final state |
+| 2 | Build deterministic `summary = f"{intent} for {vendor_id}: {processing_path} resolution, closed with {reason}"` | Dev-mode stub — future production can call Bedrock for a richer summary |
+| 3 | `memory_id = IdGenerator.generate_correlation_id()` | UUID |
+| 4 | `postgres.execute("INSERT INTO memory.episodic_memory (memory_id, vendor_id, query_id, intent, resolution_path, outcome, resolved_at, summary) VALUES (...)")` | Row is now visible to `context_loading._load_episodic_memory()` on the next query from this vendor — the system learns from its own history |
+| 5 | **Non-critical** — try/except around the whole thing; log `episodic_memory_save_failed` on error | Closure must succeed even if memory write fails |
+
+### Data model (migration 012)
+
+`src/db/migrations/012_create_sla_tracking.sql` creates:
+
+- `workflow.sla_checkpoints` — `query_id` PK, `sla_started_at`, `sla_deadline`, `warning_fired BOOL`, `l1_fired BOOL`, `l2_fired BOOL`, `last_checked_at`, `last_status`. Index `idx_sla_active` on `(last_status, sla_deadline)` for scheduler scan.
+- `workflow.closure_tracking` — `query_id` PK, `resolution_sent_at`, `auto_close_deadline`, `closed_at`, `closed_reason` (VENDOR_CONFIRMED / AUTO_CLOSED / REOPENED), `vendor_confirmation_detected_at`
+- `workflow.case_execution.linked_query_id` — new nullable column so outside-window reopens can link back to the original closed case
+
+### New settings (config/settings.py)
+
+| Name | Default | Purpose |
+|------|---------|---------|
+| `sla_monitor_interval_seconds` | 60 | Tick interval for `SlaMonitor` |
+| `auto_close_business_days` | 5 | Business days from resolution send → auto-close |
+| `closure_reopen_window_days` | 7 | Days after close a reply re-opens vs. creates a linked ticket |
+| `auto_close_interval_seconds` | 3600 | Tick interval for `AutoCloseScheduler` |
+| `confirmation_keywords` | `["thanks", "thank you", "resolved", "fixed", "that worked", "works now", "appreciate it"]` | Detect vendor confirmation on replies |
+
+### Lifespan wiring (app/lifespan.py)
+
+```python
+# Phase 6 services — instantiated after existing services
+episodic_writer = EpisodicMemoryWriter(postgres=postgres, bedrock=bedrock, settings=settings)
+closure_service = ClosureService(postgres=postgres, graph_api=graph_api, servicenow=servicenow,
+                                 eventbridge=eventbridge, episodic_writer=episodic_writer, settings=settings)
+sla_monitor = SlaMonitor(postgres=postgres, eventbridge=eventbridge, settings=settings)
+auto_close_scheduler = AutoCloseScheduler(postgres=postgres, closure_service=closure_service, settings=settings)
+
+# Background task lifecycle
+await sla_monitor.start()
+await auto_close_scheduler.start()
+# ... attach to application.state.* for visibility / tests ...
+
+# On shutdown
+await sla_monitor.stop()
+await auto_close_scheduler.stop()
+```
+
+---
+
 ## What is not built yet
 
-- Path C — Human review triage portal + workflow pause/resume (Phase 5)
-- SLA monitoring and closure/reopen logic (Phase 6)
-- Angular frontend portal — triage portal, admin dashboard (Phase 7)
-- Path B resolution from team's work notes (Step 15 — Phase 6)
+- Triage reviewer portal UI (Angular) — API is done, reviewer pages still use the vendor portal shell (Phase 7)
+- Admin dashboard with path distribution / cost metrics (Phase 7)
 - PII detection via Amazon Comprehend (Quality Gate stub exists, Phase 8)
 - Integration testing and hardening (Phase 8)
+- LLM-based summarization in EpisodicMemoryWriter (deterministic stub in dev mode; Bedrock summary is planned for production)
+- Holiday calendar for `DateHelper.add_business_days` (dev mode skips only Sat/Sun)

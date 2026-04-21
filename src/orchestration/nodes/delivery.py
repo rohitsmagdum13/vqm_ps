@@ -27,6 +27,7 @@ import structlog
 from adapters.graph_api import GraphAPIConnector
 from adapters.servicenow import ServiceNowConnector, ServiceNowConnectorError
 from config.settings import Settings
+from events.eventbridge import EventBridgeConnector
 from models.ticket import TicketCreateRequest
 from models.workflow import PipelineState
 from utils.exceptions import GraphAPIError
@@ -51,17 +52,26 @@ class DeliveryNode:
         servicenow: ServiceNowConnector,
         graph_api: GraphAPIConnector,
         settings: Settings,
+        eventbridge: EventBridgeConnector | None = None,
+        closure_service=None,
     ) -> None:
         """Initialize with connectors and settings.
 
         Args:
-            servicenow: ServiceNow connector for ticket creation.
+            servicenow: ServiceNow connector for ticket creation / status updates.
             graph_api: Graph API connector for email delivery.
             settings: Application settings.
+            eventbridge: Optional EventBridge connector. When present and the
+                delivery is resolution-mode, publishes ResolutionPrepared.
+            closure_service: Optional Phase 6 ClosureService. When present,
+                register_resolution_sent is called after a successful send so
+                the auto-close timer starts.
         """
         self._servicenow = servicenow
         self._graph_api = graph_api
         self._settings = settings
+        self._eventbridge = eventbridge
+        self._closure_service = closure_service
 
     async def execute(self, state: PipelineState) -> PipelineState:
         """Create ticket, replace placeholder, send email.
@@ -81,14 +91,26 @@ class DeliveryNode:
         vendor_context = state.get("vendor_context") or {}
         payload = state.get("unified_payload") or {}
         vendor_profile = vendor_context.get("vendor_profile", {})
+        resolution_mode = bool(state.get("resolution_mode"))
 
         logger.info(
             "Delivery started",
             step="delivery",
             query_id=query_id,
             processing_path=processing_path,
+            resolution_mode=resolution_mode,
             correlation_id=correlation_id,
         )
+
+        if resolution_mode:
+            return await self._deliver_resolution_mode(
+                state=state,
+                correlation_id=correlation_id,
+                query_id=query_id,
+                draft=draft,
+                vendor_context=vendor_context,
+                payload=payload,
+            )
 
         # ----- Phase 1: Create ServiceNow ticket -----
         ticket_info = await self._create_ticket(
@@ -126,11 +148,16 @@ class DeliveryNode:
         final_body = draft.get("body", "").replace(TICKET_PLACEHOLDER, ticket_id)
 
         # ----- Phase 3: Send email via Graph API -----
-        sender_email = payload.get("sender_email", "")
+        # Use vendor_context.email_address first so portal-origin queries
+        # reach the vendor; fall back to the email-thread sender.
+        recipient = (
+            vendor_profile.get("email_address")
+            or payload.get("sender_email", "")
+        )
         reply_to_id = payload.get("message_id")
 
         email_sent = await self._send_email(
-            to=sender_email,
+            to=recipient,
             subject=final_subject,
             body_html=final_body,
             reply_to_message_id=reply_to_id,
@@ -158,6 +185,13 @@ class DeliveryNode:
         # Path B: Human must investigate → AWAITING_RESOLUTION
         final_status = "RESOLVED" if processing_path == "A" else "AWAITING_RESOLUTION"
 
+        # Phase 6: Path A sends a terminal resolution email — start the
+        # auto-close timer so ClosureService can auto-close after 5 business
+        # days without a confirmation reply. Path B does not register here;
+        # the Step 15 resolution-mode delivery below registers instead.
+        if processing_path == "A":
+            await self._register_resolution_sent(query_id, correlation_id)
+
         logger.info(
             "Delivery complete",
             step="delivery",
@@ -174,6 +208,137 @@ class DeliveryNode:
             "status": final_status,
             "updated_at": TimeHelper.ist_now().isoformat(),
         }
+
+    async def _deliver_resolution_mode(
+        self,
+        *,
+        state: PipelineState,
+        correlation_id: str,
+        query_id: str,
+        draft: dict,
+        vendor_context: dict,
+        payload: dict,
+    ) -> PipelineState:
+        """Phase 6 Step 15 delivery — reuse existing ticket, skip creation.
+
+        The acknowledgment-email delivery earlier in the pipeline already
+        created the ServiceNow incident. Now we just:
+          1. Pull the existing ticket_info from state.
+          2. Send the drafted resolution email via Graph API.
+          3. Update ServiceNow status to AWAITING_VENDOR_CONFIRMATION.
+          4. Publish ResolutionPrepared (non-critical).
+          5. Register with ClosureService so the auto-close timer starts.
+        """
+        ticket_info = state.get("ticket_info") or {}
+        ticket_id = ticket_info.get("ticket_number") or ticket_info.get("ticket_id", "")
+        if not ticket_id:
+            logger.error(
+                "Resolution-mode delivery missing ticket_number",
+                step="delivery",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )
+            return {
+                "status": "DELIVERY_FAILED",
+                "error": "ticket_number missing in resolution_mode",
+                "updated_at": TimeHelper.ist_now().isoformat(),
+            }
+
+        final_subject = draft.get("subject", "").replace(TICKET_PLACEHOLDER, ticket_id)
+        final_body = draft.get("body", "").replace(TICKET_PLACEHOLDER, ticket_id)
+
+        vendor_profile = vendor_context.get("vendor_profile", {})
+        recipient = (
+            vendor_profile.get("email_address")
+            or payload.get("sender_email", "")
+        )
+        reply_to_id = payload.get("message_id")
+
+        email_sent = await self._send_email(
+            to=recipient,
+            subject=final_subject,
+            body_html=final_body,
+            reply_to_message_id=reply_to_id,
+            correlation_id=correlation_id,
+            query_id=query_id,
+        )
+        if not email_sent:
+            return {
+                "status": "DELIVERY_FAILED",
+                "error": "Resolution-mode email send failed",
+                "updated_at": TimeHelper.ist_now().isoformat(),
+            }
+
+        # Update ServiceNow status — non-critical, log and continue on failure
+        try:
+            await self._servicenow.update_ticket_status(
+                ticket_id,
+                "AWAITING_VENDOR_CONFIRMATION",
+                work_notes="Resolution email sent to vendor",
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to update ServiceNow status to AWAITING_VENDOR_CONFIRMATION",
+                step="delivery",
+                ticket_id=ticket_id,
+                correlation_id=correlation_id,
+            )
+
+        # Publish ResolutionPrepared — non-critical, log and continue
+        if self._eventbridge is not None:
+            try:
+                await self._eventbridge.publish_event(
+                    "ResolutionPrepared",
+                    {
+                        "query_id": query_id,
+                        "ticket_id": ticket_id,
+                    },
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to publish ResolutionPrepared event",
+                    step="delivery",
+                    query_id=query_id,
+                    correlation_id=correlation_id,
+                )
+
+        await self._register_resolution_sent(query_id, correlation_id)
+
+        logger.info(
+            "Resolution-mode delivery complete",
+            step="delivery",
+            query_id=query_id,
+            ticket_id=ticket_id,
+            correlation_id=correlation_id,
+        )
+        return {
+            "status": "RESOLVED",
+            "updated_at": TimeHelper.ist_now().isoformat(),
+        }
+
+    async def _register_resolution_sent(
+        self, query_id: str, correlation_id: str
+    ) -> None:
+        """Call ClosureService.register_resolution_sent if available.
+
+        Non-critical: logs and continues on failure so closure tracking
+        issues cannot roll back a successful delivery.
+        """
+        if self._closure_service is None or not query_id:
+            return
+        try:
+            await self._closure_service.register_resolution_sent(
+                query_id=query_id, correlation_id=correlation_id
+            )
+        except Exception:
+            logger.warning(
+                "Failed to register resolution_sent with ClosureService",
+                step="delivery",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )
 
     async def _create_ticket(
         self,

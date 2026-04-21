@@ -3,18 +3,28 @@
 LangGraph orchestrator for the VQMS AI pipeline.
 
 Wires all pipeline nodes into a StateGraph with conditional
-edges for confidence check (Path C branch) and path decision
-(Path A vs Path B branch).
+edges for confidence check (Path C branch), path decision
+(Path A vs Path B branch), and the Phase 6 resolution-from-notes
+re-entry (Step 15).
 
 Graph flow:
-    START → context_loading → query_analysis → confidence_check
-        ─(processing_path=="C")─→ triage_placeholder → END
-        ─(else)─→ routing → kb_search → path_decision
-            ─(processing_path=="A")─→ resolution → quality_gate → delivery → END
-            ─(processing_path=="B")─→ acknowledgment → quality_gate → delivery → END
+    START (entry switch)
+      ─(resume_context.action=="prepare_resolution")─→ resolution_from_notes
+                                                          ↓
+                                                      quality_gate
+                                                          ↓
+                                                       delivery → END
+      ─(else)─→ context_loading → query_analysis → confidence_check
+          ─(processing_path=="C")─→ triage → END
+          ─(else)─→ routing → kb_search → path_decision
+              ─(processing_path=="A")─→ resolution → quality_gate → delivery → END
+              ─(processing_path=="B")─→ acknowledgment → quality_gate → delivery → END
 
-Phase 4 nodes (resolution, acknowledgment, quality_gate, delivery)
-are real implementations. Triage placeholder remains for Phase 5.
+Step 15 (resolution-from-notes) is triggered by a ServiceNow webhook
+(see src/api/routes/webhooks.py -> servicenow_webhook). The webhook
+re-enqueues the case with resume_context.action="prepare_resolution";
+sqs_consumer.py surfaces that into PipelineState so the entry switch
+below routes the case directly into the resolution-from-notes branch.
 """
 
 from __future__ import annotations
@@ -25,32 +35,27 @@ import structlog
 from langgraph.graph import END, StateGraph
 
 from models.workflow import PipelineState
-from utils.helpers import TimeHelper
 
 logger = structlog.get_logger(__name__)
 
 
 # ===========================
-# Placeholder Node (Phase 5)
-# ===========================
-
-
-async def triage_placeholder(state: PipelineState) -> PipelineState:
-    """Placeholder for Path C triage node (Phase 5)."""
-    logger.info(
-        "Triage placeholder reached — Path C",
-        step="triage_placeholder",
-        correlation_id=state.get("correlation_id", ""),
-    )
-    return {
-        "status": "PAUSED",
-        "updated_at": TimeHelper.ist_now().isoformat(),
-    }
-
-
-# ===========================
 # Conditional Edge Functions
 # ===========================
+
+
+def route_from_entry(state: PipelineState) -> str:
+    """Decide whether this run is a normal intake or a resume.
+
+    Phase 6: ServiceNow sets resume_context.action == "prepare_resolution"
+    when the human team finishes an investigation. In that case the
+    pipeline must skip context_loading / query_analysis (already done
+    on the first run) and jump straight to resolution-from-notes.
+    """
+    resume_context = state.get("resume_context")
+    if isinstance(resume_context, dict) and resume_context.get("action") == "prepare_resolution":
+        return "resolution_from_notes"
+    return "context_loading"
 
 
 def route_after_confidence_check(state: PipelineState) -> str:
@@ -78,6 +83,21 @@ def route_after_path_decision(state: PipelineState) -> str:
 
 
 # ===========================
+# Entry passthrough node
+# ===========================
+
+
+async def _entry_passthrough(state: PipelineState) -> PipelineState:
+    """No-op node used so START can go through a conditional edge.
+
+    LangGraph's set_entry_point is a hard edge; to branch at the top
+    we set entry to this passthrough and use a conditional edge from
+    here. Returning an empty dict means "make no state changes."
+    """
+    return {}
+
+
+# ===========================
 # Graph Builder
 # ===========================
 
@@ -86,6 +106,7 @@ def build_pipeline_graph(
     context_loading_node: Any,
     query_analysis_node: Any,
     confidence_check_node: Any,
+    triage_node: Any,
     routing_node: Any,
     kb_search_node: Any,
     path_decision_node: Any,
@@ -93,6 +114,7 @@ def build_pipeline_graph(
     acknowledgment_node: Any,
     quality_gate_node: Any,
     delivery_node: Any,
+    resolution_from_notes_node: Any,
 ) -> Any:
     """Build the LangGraph pipeline graph with all nodes and edges.
 
@@ -103,6 +125,8 @@ def build_pipeline_graph(
         context_loading_node: Step 7 — loads vendor context.
         query_analysis_node: Step 8 — LLM Call #1, intent + entities.
         confidence_check_node: Decision Point 1 — confidence gate.
+        triage_node: Path C — builds triage package and pauses workflow
+            when confidence is below threshold.
         routing_node: Step 9A — deterministic team/SLA assignment.
         kb_search_node: Step 9B — embed + pgvector search.
         path_decision_node: Decision Point 2 — Path A vs Path B.
@@ -110,13 +134,18 @@ def build_pipeline_graph(
         acknowledgment_node: Step 10B — Path B acknowledgment draft.
         quality_gate_node: Step 11 — 7-check validation.
         delivery_node: Step 12 — ServiceNow ticket + Graph API email.
+        resolution_from_notes_node: Phase 6 Step 15 — Path B resolution
+            drafted from ServiceNow work notes.
 
     Returns:
         Compiled LangGraph StateGraph ready for invocation.
     """
     graph = StateGraph(PipelineState)
 
-    # Register all real nodes (Steps 7-12)
+    # Entry passthrough — lets us add a conditional edge at the very top.
+    graph.add_node("entry", _entry_passthrough)
+
+    # Register all real nodes (Steps 7-12, Step 15, Path C)
     graph.add_node("context_loading", context_loading_node.execute)
     graph.add_node("query_analysis", query_analysis_node.execute)
     graph.add_node("confidence_check", confidence_check_node.execute)
@@ -127,13 +156,21 @@ def build_pipeline_graph(
     graph.add_node("acknowledgment", acknowledgment_node.execute)
     graph.add_node("quality_gate", quality_gate_node.execute)
     graph.add_node("delivery", delivery_node.execute)
+    graph.add_node("triage", triage_node.execute)
+    graph.add_node("resolution_from_notes", resolution_from_notes_node.execute)
 
-    # Triage placeholder remains for Phase 5
-    graph.add_node("triage", triage_placeholder)
+    # Top-level entry switch — normal intake vs. Step 15 resume.
+    graph.set_entry_point("entry")
+    graph.add_conditional_edges(
+        "entry",
+        route_from_entry,
+        {
+            "context_loading": "context_loading",
+            "resolution_from_notes": "resolution_from_notes",
+        },
+    )
 
-    # Wire edges
-    # START → context_loading → query_analysis → confidence_check
-    graph.set_entry_point("context_loading")
+    # Normal intake: context_loading → query_analysis → confidence_check
     graph.add_edge("context_loading", "query_analysis")
     graph.add_edge("query_analysis", "confidence_check")
 
@@ -161,6 +198,10 @@ def build_pipeline_graph(
     # Both paths converge → quality gate → delivery → END
     graph.add_edge("resolution", "quality_gate")
     graph.add_edge("acknowledgment", "quality_gate")
+
+    # Step 15 resolution-from-notes also funnels through the gate + delivery.
+    graph.add_edge("resolution_from_notes", "quality_gate")
+
     graph.add_edge("quality_gate", "delivery")
     graph.add_edge("delivery", END)
 

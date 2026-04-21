@@ -1,10 +1,17 @@
 import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
+import { HttpErrorResponse } from '@angular/common/http';
+import { AuthService } from '../../core/auth/auth.service';
 import { QueriesStore } from '../../data/queries.store';
+import {
+  QueryService,
+  type BackendPriority,
+  type QuerySubmissionPayload,
+} from '../../data/query.service';
 import { ToastService } from '../../core/notifications/toast.service';
-import { qtypeById } from '../../data/qtypes.data';
-import type { Priority, Query } from '../../shared/models/query';
-import { SLA_BY_PRIORITY, type WizardDraft, type WizardStep } from './wizard.model';
+import { toBackendQueryType } from '../../data/qtypes.data';
+import type { Priority } from '../../shared/models/query';
+import { type WizardDraft, type WizardStep } from './wizard.model';
 import { WizardStepper } from './stepper';
 import { WizardStepType } from './step-type';
 import { WizardStepDetails } from './step-details';
@@ -12,17 +19,12 @@ import { WizardStepReview } from './step-review';
 import { WizardSubmitting } from './submitting';
 import { WizardSuccess } from './success';
 
-function nextQueryId(existing: readonly Query[]): string {
-  const year = new Date().getFullYear();
-  const highest = existing.reduce((max, q) => {
-    const m = /VQ-\d{4}-(\d+)/.exec(q.id);
-    if (!m) return max;
-    const n = Number.parseInt(m[1], 10);
-    return Number.isFinite(n) && n > max ? n : max;
-  }, 0);
-  const n = (highest + 1).toString().padStart(4, '0');
-  return `VQ-${year}-${n}`;
-}
+const PRIORITY_TO_BACKEND: Record<Priority, BackendPriority> = {
+  Low: 'LOW',
+  Medium: 'MEDIUM',
+  High: 'HIGH',
+  Critical: 'CRITICAL',
+};
 
 @Component({
   selector: 'app-wizard-page',
@@ -85,7 +87,7 @@ function nextQueryId(existing: readonly Query[]): string {
             <app-wizard-step-review [draft]="draft()" />
           }
           @case (4) {
-            <app-wizard-submitting (done)="onSubmitted()" />
+            <app-wizard-submitting (done)="onAnimationDone()" />
           }
           @case (5) {
             <app-wizard-success
@@ -120,7 +122,7 @@ function nextQueryId(existing: readonly Query[]): string {
             <button
               type="button"
               (click)="next()"
-              [disabled]="!canAdvance()"
+              [disabled]="!canAdvance() || submitting()"
               class="inline-flex items-center gap-1 rounded-[var(--radius-sm)] bg-primary text-surface text-xs font-medium px-4 py-1.5 hover:bg-secondary transition disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {{ step() === 3 ? 'Submit Query →' : 'Continue →' }}
@@ -135,6 +137,8 @@ export class WizardPage {
   readonly #router = inject(Router);
   readonly #store = inject(QueriesStore);
   readonly #toast = inject(ToastService);
+  readonly #auth = inject(AuthService);
+  readonly #svc = inject(QueryService);
 
   protected readonly step = signal<WizardStep>(1);
   protected readonly type = signal<string>('');
@@ -143,6 +147,9 @@ export class WizardPage {
   protected readonly priority = signal<Priority>('Medium');
   protected readonly ref = signal<string>('');
   protected readonly newId = signal<string>('');
+  protected readonly submitting = signal<boolean>(false);
+  readonly #animationDone = signal<boolean>(false);
+  readonly #submissionError = signal<string | null>(null);
 
   protected readonly draft = computed<WizardDraft>(() => ({
     type: this.type(),
@@ -156,7 +163,7 @@ export class WizardPage {
     const s = this.step();
     if (s === 1) return this.type().length > 0;
     if (s === 2) {
-      return this.subject().trim().length >= 3 && this.desc().trim().length >= 10;
+      return this.subject().trim().length >= 5 && this.desc().trim().length >= 10;
     }
     return true;
   });
@@ -164,7 +171,7 @@ export class WizardPage {
   protected next(): void {
     const s = this.step();
     if (s === 3) {
-      this.step.set(4);
+      this.#submitToBackend();
       return;
     }
     if (s < 3 && this.canAdvance()) {
@@ -188,32 +195,9 @@ export class WizardPage {
     void this.#router.navigate(['/portal']);
   }
 
-  protected onSubmitted(): void {
-    const d = this.draft();
-    const t = qtypeById(d.type);
-    const id = nextQueryId(this.#store.queries());
-    const q: Query = {
-      id,
-      subj: d.subject || 'New query',
-      type: t?.lbl ?? 'Other',
-      pri: d.priority,
-      status: 'Open',
-      submitted: 'Just now',
-      sla: SLA_BY_PRIORITY[d.priority],
-      slaCls: 'sla-ok',
-      agent: 'AI',
-      tl: [
-        { c: '#10B981', t: 'Query received & logged by VQMS', ts: 'Just now' },
-        { c: '#3c2cda', t: `Classified as ${d.priority.toUpperCase()} priority`, ts: '+1s' },
-        { c: '#3c2cda', t: 'Routed to the resolution queue', ts: '+4s', p: true },
-      ],
-      ai: 'Draft pending — AI is preparing a recommended response from the knowledge base.',
-      msgs: [{ f: 'vendor', t: d.desc || d.subject, ts: 'Just now' }],
-    };
-    this.#store.add(q);
-    this.newId.set(id);
-    this.step.set(5);
-    this.#toast.show(`${id} submitted`, 'success');
+  protected onAnimationDone(): void {
+    this.#animationDone.set(true);
+    this.#maybeShowSuccess();
   }
 
   protected trackNew(): void {
@@ -227,6 +211,78 @@ export class WizardPage {
     this.step.set(1);
   }
 
+  #submitToBackend(): void {
+    const vendorId = this.#auth.vendorId();
+    if (!vendorId) {
+      this.#toast.show('You need a vendor profile to submit a query.', 'error');
+      return;
+    }
+    const d = this.draft();
+    const payload: QuerySubmissionPayload = {
+      query_type: toBackendQueryType(d.type),
+      subject: d.subject.trim(),
+      description: d.desc.trim(),
+      priority: PRIORITY_TO_BACKEND[d.priority],
+      reference_number: d.ref.trim() ? d.ref.trim() : null,
+    };
+
+    this.submitting.set(true);
+    this.newId.set('');
+    this.#animationDone.set(false);
+    this.#submissionError.set(null);
+    this.step.set(4);
+
+    this.#svc.submit(vendorId, payload).subscribe({
+      next: (resp) => {
+        this.submitting.set(false);
+        this.newId.set(resp.query_id);
+        this.#store.addFromServer({
+          query_id: resp.query_id,
+          subject: payload.subject,
+          query_type: payload.query_type,
+          status: resp.status,
+          priority: payload.priority,
+          source: 'portal',
+          processing_path: null,
+          reference_number: payload.reference_number ?? null,
+          sla_deadline: null,
+          created_at: resp.created_at,
+          updated_at: resp.created_at,
+        });
+        this.#maybeShowSuccess();
+      },
+      error: (err: unknown) => {
+        this.submitting.set(false);
+        const msg = this.#errorMessage(err);
+        this.#submissionError.set(msg);
+        this.#toast.show(msg, 'error', 5000);
+        this.step.set(3);
+      },
+    });
+  }
+
+  #maybeShowSuccess(): void {
+    if (this.#animationDone() && this.newId()) {
+      this.step.set(5);
+      this.#toast.show(`${this.newId()} submitted`, 'success');
+    }
+  }
+
+  #errorMessage(err: unknown): string {
+    if (err instanceof HttpErrorResponse) {
+      const detail =
+        err.error && typeof err.error === 'object' && 'detail' in err.error
+          ? (err.error as { detail?: unknown }).detail
+          : null;
+      if (typeof detail === 'string' && detail.length > 0) return detail;
+      if (err.status === 0) return 'Cannot reach the server. Is the backend running?';
+      if (err.status === 409) return 'A very similar query was submitted recently (duplicate detected).';
+      return `Submission failed (${err.status})`;
+    }
+    if (err instanceof Error) return err.message;
+    return 'Submission failed';
+  }
+
   private resetDraft(): void {
     this.type.set('');
     this.subject.set('');
@@ -234,5 +290,8 @@ export class WizardPage {
     this.priority.set('Medium');
     this.ref.set('');
     this.newId.set('');
+    this.submitting.set(false);
+    this.#animationDone.set(false);
+    this.#submissionError.set(null);
   }
 }

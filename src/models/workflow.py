@@ -105,6 +105,17 @@ class PipelineState(TypedDict, total=False):
     # Path C triage output
     triage_package: dict | None
 
+    # Phase 6 Step 15: Path B resolution-from-notes flow.
+    # When a ServiceNow webhook fires a RESOLVED status, the graph re-enters
+    # at a special entry that loads these fields and skips the normal path.
+    resolution_mode: bool
+    work_notes: str
+
+    # Phase 6 resume context — set by sqs_consumer when the incoming SQS
+    # message has resume_context.action == "prepare_resolution". Steers the
+    # graph entry-switch into the resolution-from-notes branch.
+    resume_context: dict | None
+
     # Pipeline status tracking
     status: str  # RECEIVED, ANALYZING, ROUTING, DRAFTING, VALIDATING, DELIVERING, RESOLVED, PAUSED, FAILED
     error: str | None

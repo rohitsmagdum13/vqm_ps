@@ -169,7 +169,13 @@ class Settings(BaseSettings):
     # ===========================
     # SERVICENOW ITSM (Ticket Operations)
     # ===========================
+    # You can configure ServiceNow with EITHER:
+    #   (a) servicenow_instance_url — the full URL (e.g. https://dev123456.service-now.com), OR
+    #   (b) servicenow_instance_name — just the instance short name (e.g. dev123456);
+    #       the adapter will build the URL as https://<name>.service-now.com
+    # If both are set, servicenow_instance_url wins.
     servicenow_instance_url: str | None = None
+    servicenow_instance_name: str | None = None
     servicenow_username: str | None = None
     servicenow_password: str | None = None
     servicenow_client_id: str | None = None
@@ -227,6 +233,37 @@ class Settings(BaseSettings):
     sla_l1_escalation_threshold_percent: int = 85
     sla_l2_escalation_threshold_percent: int = 95
     sla_default_hours: int = 24
+
+    # ===========================
+    # PHASE 6 — SLA MONITOR + CLOSURE
+    # ===========================
+    # How often the SlaMonitor scans workflow.sla_checkpoints (seconds).
+    # Kept short because a missed threshold crossing delays escalation.
+    sla_monitor_interval_seconds: int = 60
+
+    # How often AutoCloseScheduler scans workflow.closure_tracking (seconds).
+    # Hourly is fine — the auto-close deadline is measured in business days.
+    auto_close_interval_seconds: int = 3600
+
+    # Business days between sending a resolution and auto-closing the case.
+    auto_close_business_days: int = 5
+
+    # Days after closure during which a vendor reply REOPENS the same case.
+    # Outside this window, a reply creates a new linked query_id.
+    closure_reopen_window_days: int = 7
+
+    # Keyword match for vendor confirmation detection on replies to a closed
+    # or open case. Case-insensitive substring match against the email body.
+    # Kept simple — LLM-based intent classification would be overkill here.
+    confirmation_keywords: list[str] = [
+        "thanks",
+        "thank you",
+        "resolved",
+        "fixed",
+        "that worked",
+        "works now",
+        "appreciate it",
+    ]
 
     # ===========================
     # AGENT CONFIGURATION

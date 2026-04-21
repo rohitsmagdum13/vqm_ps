@@ -14,6 +14,7 @@ from api.routes.auth import router as auth_router
 from api.routes.dashboard import router as dashboard_router
 from api.routes.portal_dashboard import router as portal_dashboard_router
 from api.routes.queries import router as queries_router
+from api.routes.triage import router as triage_router
 from api.routes.vendors import router as vendors_router
 from api.routes.webhooks import router as webhooks_router
 
@@ -26,6 +27,7 @@ def register_routes(application: FastAPI) -> None:
     application.include_router(webhooks_router)
     application.include_router(dashboard_router)
     application.include_router(portal_dashboard_router)
+    application.include_router(triage_router)
 
     @application.get("/health", tags=["system"])
     async def health_check():

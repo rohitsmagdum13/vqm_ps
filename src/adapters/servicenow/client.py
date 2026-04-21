@@ -51,6 +51,45 @@ class ServiceNowClient:
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = ""
 
+    def _resolve_base_url(self) -> str:
+        """Work out the ServiceNow base URL from settings.
+
+        Two ways to configure:
+          1. servicenow_instance_url — full URL like
+             https://dev123456.service-now.com (trailing slash tolerated)
+          2. servicenow_instance_name — short name like dev123456, which
+             gets expanded to https://dev123456.service-now.com
+
+        Option 1 wins if both are set. Raises if neither is configured.
+        """
+        full_url = (self._settings.servicenow_instance_url or "").strip()
+        if full_url:
+            return full_url.rstrip("/")
+
+        instance_name = (self._settings.servicenow_instance_name or "").strip()
+        if instance_name:
+            # Guard against someone pasting a full URL here by mistake —
+            # strip scheme/domain leftovers so we always end up with just
+            # the short instance identifier before building the URL.
+            short_name = instance_name
+            if "://" in short_name:
+                short_name = short_name.split("://", 1)[1]
+            short_name = short_name.split("/", 1)[0]
+            short_name = short_name.split(".", 1)[0]
+            short_name = short_name.rstrip("/")
+            if not short_name:
+                raise ServiceNowConnectorError(
+                    "SERVICENOW_INSTANCE_NAME is set but appears empty after "
+                    "normalization"
+                )
+            return f"https://{short_name}.service-now.com"
+
+        raise ServiceNowConnectorError(
+            "ServiceNow is not configured: set either SERVICENOW_INSTANCE_URL "
+            "(full URL) or SERVICENOW_INSTANCE_NAME (short name, e.g. "
+            "'dev123456')"
+        )
+
     def _get_client(self) -> httpx.AsyncClient:
         """Get or create the httpx async client.
 
@@ -66,11 +105,7 @@ class ServiceNowClient:
         if self._client is not None:
             return self._client
 
-        instance_url = self._settings.servicenow_instance_url
-        if not instance_url:
-            raise ServiceNowConnectorError(
-                "SERVICENOW_INSTANCE_URL is not configured"
-            )
+        self._base_url = self._resolve_base_url()
 
         username = self._settings.servicenow_username
         password = self._settings.servicenow_password
@@ -80,8 +115,11 @@ class ServiceNowClient:
                 "SERVICENOW_USERNAME and SERVICENOW_PASSWORD are required"
             )
 
-        # Strip trailing slash from instance URL
-        self._base_url = instance_url.rstrip("/")
+        logger.info(
+            "ServiceNow client initialized",
+            tool="servicenow",
+            base_url=self._base_url,
+        )
 
         self._client = httpx.AsyncClient(
             auth=(username, password),

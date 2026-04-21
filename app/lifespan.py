@@ -9,6 +9,7 @@ On shutdown: close all connections cleanly.
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
@@ -181,6 +182,129 @@ async def lifespan(application: FastAPI):
         logger.warning("Email Dashboard Service init failed")
         application.state.dashboard_service = None
 
+    # --- Create Triage Service (Path C) ---
+    # Backs the triage API routes that reviewers use to correct
+    # low-confidence analyses and resume the paused workflow.
+    # SQS and EventBridge are optional — without SQS the resume
+    # falls back to DB-only so a background worker can pick up.
+    if application.state.postgres is not None:
+        try:
+            from services.triage import TriageService
+
+            application.state.triage_service = TriageService(
+                postgres=application.state.postgres,
+                sqs=application.state.sqs,
+                eventbridge=application.state.eventbridge,
+                settings=settings,
+            )
+            logger.info("Triage Service ready")
+        except Exception:
+            logger.warning("Triage Service init failed")
+            application.state.triage_service = None
+    else:
+        application.state.triage_service = None
+
+    # --- Phase 6 Episodic Memory Writer ---
+    # Writes a summary row into memory.episodic_memory on case closure so
+    # context_loading can surface it on future queries for the same vendor.
+    episodic_memory_writer = None
+    if application.state.postgres is not None:
+        try:
+            from services.episodic_memory import EpisodicMemoryWriter
+
+            episodic_memory_writer = EpisodicMemoryWriter(
+                postgres=application.state.postgres,
+                settings=settings,
+            )
+            application.state.episodic_memory_writer = episodic_memory_writer
+            logger.info("Episodic Memory Writer ready")
+        except Exception:
+            logger.warning("Episodic Memory Writer init failed")
+            application.state.episodic_memory_writer = None
+    else:
+        application.state.episodic_memory_writer = None
+
+    # --- Phase 6 Closure Service ---
+    # Handles confirmation-reply detection, reopen inside window, and the
+    # actual close_case call (update case_execution, ServiceNow status,
+    # publish TicketClosed, write episodic memory).
+    closure_service = None
+    if (
+        application.state.postgres is not None
+        and application.state.sqs is not None
+        and servicenow is not None
+    ):
+        try:
+            from services.closure import ClosureService
+
+            closure_service = ClosureService(
+                postgres=application.state.postgres,
+                servicenow=servicenow,
+                eventbridge=application.state.eventbridge,
+                sqs=application.state.sqs,
+                episodic_memory_writer=episodic_memory_writer,
+                settings=settings,
+            )
+            application.state.closure_service = closure_service
+            logger.info("Closure Service ready")
+        except Exception:
+            logger.warning("Closure Service init failed")
+            application.state.closure_service = None
+    else:
+        application.state.closure_service = None
+
+    # --- Phase 6 SLA Monitor background task ---
+    # Scans workflow.sla_checkpoints every sla_monitor_interval_seconds
+    # and fires SLAWarning70 / SLAEscalation85 / SLAEscalation95 events.
+    sla_monitor = None
+    sla_monitor_task: asyncio.Task | None = None
+    if application.state.postgres is not None and application.state.eventbridge is not None:
+        try:
+            from services.sla_monitor import SlaMonitor
+
+            sla_monitor = SlaMonitor(
+                postgres=application.state.postgres,
+                eventbridge=application.state.eventbridge,
+                settings=settings,
+            )
+            application.state.sla_monitor = sla_monitor
+            sla_monitor_task = asyncio.create_task(sla_monitor.start_monitor_loop())
+            logger.info(
+                "SLA monitor started",
+                interval_seconds=settings.sla_monitor_interval_seconds,
+            )
+        except Exception:
+            logger.warning("SLA monitor start failed")
+            application.state.sla_monitor = None
+    else:
+        application.state.sla_monitor = None
+
+    # --- Phase 6 Auto-Close Scheduler background task ---
+    # Scans workflow.closure_tracking hourly and closes any case whose
+    # auto_close_deadline has passed without a vendor confirmation.
+    auto_close_scheduler = None
+    auto_close_task: asyncio.Task | None = None
+    if closure_service is not None:
+        try:
+            from services.auto_close_scheduler import AutoCloseScheduler
+
+            auto_close_scheduler = AutoCloseScheduler(
+                postgres=application.state.postgres,
+                closure_service=closure_service,
+                settings=settings,
+            )
+            application.state.auto_close_scheduler = auto_close_scheduler
+            auto_close_task = asyncio.create_task(auto_close_scheduler.start_loop())
+            logger.info(
+                "Auto-close scheduler started",
+                interval_seconds=settings.auto_close_interval_seconds,
+            )
+        except Exception:
+            logger.warning("Auto-close scheduler start failed")
+            application.state.auto_close_scheduler = None
+    else:
+        application.state.auto_close_scheduler = None
+
     # --- Store settings for route handlers ---
     application.state.settings = settings
 
@@ -190,6 +314,26 @@ async def lifespan(application: FastAPI):
 
     # --- Shutdown ---
     logger.info("VQMS shutting down")
+
+    if sla_monitor is not None:
+        sla_monitor.stop()
+    if sla_monitor_task is not None:
+        sla_monitor_task.cancel()
+        try:
+            await sla_monitor_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        logger.info("SLA monitor stopped")
+
+    if auto_close_scheduler is not None:
+        auto_close_scheduler.stop()
+    if auto_close_task is not None:
+        auto_close_task.cancel()
+        try:
+            await auto_close_task
+        except (asyncio.CancelledError, Exception):
+            pass
+        logger.info("Auto-close scheduler stopped")
 
     if servicenow is not None:
         await servicenow.close()

@@ -9,7 +9,7 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 
 ## Current State
 
-**Phase 4: Response Generation and Delivery** — complete.
+**Phase 6: SLA Monitoring and Closure** — complete.
 
 ### What Works Right Now
 
@@ -47,6 +47,23 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 - Quality Gate (7 deterministic checks: ticket format, SLA wording, required sections, restricted terms, word count, source citations, PII scan)
 - Delivery (ServiceNow ticket creation + Graph API email send)
 - SQS consumer pulls from both intake queues and feeds the graph
+
+**Human Review (Path C — low confidence < 0.85):**
+- Triage node persists a TriagePackage to `workflow.triage_packages` and PAUSES the workflow (status=PAUSED, processing_path=C)
+- HumanReviewRequired event published to EventBridge
+- GET /triage/queue — reviewer queue of pending packages (oldest first, limit clamped to [1, 200])
+- GET /triage/{query_id} — full triage package with AI analysis, confidence breakdown, suggested routing
+- POST /triage/{query_id}/review — reviewer submits corrections (corrected_intent, corrected_vendor_id, confidence_override, reviewer_notes); `reviewer_id` is always taken from JWT sub, never from request body
+- On review: audit row written to `workflow.reviewer_decisions`, package flipped to REVIEWED, corrected analysis written back to `workflow.case_execution`, query re-enqueued to the intake SQS queue with `resume_context.from_triage=True`
+- Workflow resume re-enters `context_loading` with confidence now 1.0 (or reviewer's override) and naturally flows to Path A or Path B — no parallel "reviewed" branch
+- Graceful degradation: if SQS is unavailable, audit trail is still persisted and `resume_method="db_only"` is returned
+
+**SLA Monitoring, Closure, and Episodic Memory (Phase 6):**
+- `SlaMonitor` — asyncio background task, ticks every `sla_monitor_interval_seconds` (default 60s). Scans `workflow.sla_checkpoints` for active cases and publishes `SLAWarning70` / `SLAEscalation85` / `SLAEscalation95` at 70% / 85% / 95% elapsed. Idempotent via per-threshold boolean flags — each event fires once per case.
+- `ResolutionFromNotesNode` (Step 15) — when ServiceNow marks a Path B ticket RESOLVED, `POST /webhooks/servicenow` re-enqueues the case with `resume_context.action="prepare_resolution"`. The LangGraph entry-switch routes it directly to `resolution_from_notes → quality_gate → delivery`, skipping the intake nodes. The node fetches ServiceNow work notes, renders the `resolution_from_notes_v1` prompt with vendor-tier-aware SLA phrasing (Platinum / Gold / Silver / Bronze), calls the LLM gateway, and produces a `DraftResponse`.
+- `ClosureService` — single close_case write path: updates `workflow.case_execution.status=CLOSED`, flips `workflow.sla_checkpoints.last_status=CLOSED` so SLA monitor ignores it, updates ServiceNow to `Closed`, publishes `TicketClosed`, and calls `EpisodicMemoryWriter.save_closure`. Three entry points: `detect_confirmation` (email-intake-driven keyword match on `settings.confirmation_keywords`), `handle_reopen` (inside window → flip to AWAITING_RESOLUTION + re-enqueue with `is_reopen=True`; outside window → create new linked query_id via `workflow.case_execution.linked_query_id`), and `AutoCloseScheduler.tick`.
+- `AutoCloseScheduler` — asyncio background task, ticks every `auto_close_interval_seconds` (default 3600s). Selects rows from `workflow.closure_tracking` with `auto_close_deadline <= now()` and calls `close_case(reason="AUTO_CLOSED")`. `DateHelper.add_business_days` skips Sat/Sun (no holiday calendar in dev mode).
+- `EpisodicMemoryWriter` — on every close, INSERTs one row into `memory.episodic_memory` with `{memory_id, vendor_id, query_id, intent, resolution_path, outcome, resolved_at, summary}`. Summary is deterministic in dev mode (`"{intent} for {vendor_id}: {processing_path} resolution, closed with {reason}"`). These rows are what `context_loading._load_episodic_memory()` surfaces on future queries from the same vendor — the system learns from its own history.
 
 **Vendor Management (Salesforce Vendor_Account__c):**
 - GET /vendors — list all active vendors, sorted ascending (V-001 first)
@@ -273,11 +290,19 @@ See `docs/api_testing_guide.md` for ready-to-use test examples.
 | `/vendors/{vendor_id}` | PUT | Bearer | Update vendor fields (returns full record) |
 | `/vendors/{vendor_id}` | DELETE | Bearer | Permanently delete a vendor |
 
+### Human Review / Triage (REVIEWER or ADMIN only)
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/triage/queue` | GET | Bearer | List pending triage packages (oldest first, `limit` clamped to [1, 200]) |
+| `/triage/{query_id}` | GET | Bearer | Full TriagePackage detail (original query + AI analysis + confidence breakdown + suggested routing) |
+| `/triage/{query_id}/review` | POST | Bearer | Submit reviewer corrections — re-enqueues the query so the pipeline resumes with corrected analysis. Returns `{status, query_id, resume_method}` |
+
 ### System
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|
 | `/health` | GET | None | Health check |
 | `/webhooks/ms-graph` | POST | HMAC | Graph API email notifications |
+| `/webhooks/servicenow` | POST | HMAC (no JWT) | ServiceNow resolution-prepared callback — `{ticket_id, status, correlation_id?}`. When `status == "RESOLVED"`, looks up the case via `workflow.ticket_link`, re-enqueues to the intake SQS with `resume_context.action=prepare_resolution`, which triggers Step 15 (resolution drafted from work notes). Returns `{status: "enqueued" | "ignored" | "error", query_id?, reason?}` |
 
 ---
 
@@ -357,8 +382,8 @@ Every vendor query follows one of three paths:
 | 2 | Done | Intake: email ingestion + portal submission |
 | 3 | Done | AI Pipeline: LangGraph, query analysis, routing, KB search |
 | 4 | Done | Response generation: resolution, acknowledgment, quality gate, delivery |
-| 5 | Planned | Human review: Path C triage workflow |
-| 6 | Planned | SLA monitoring and closure logic |
+| 5 | Done | Human review: Path C triage workflow (persist + pause + reviewer API + resume via SQS) |
+| 6 | Done | SLA monitoring (70/85/95% thresholds), Path B resolution-from-notes (Step 15), closure + auto-close, episodic memory write-back |
 | 7 | Planned | Frontend: Angular vendor portal + triage portal |
 | 8 | Planned | Integration testing, hardening, production readiness |
 

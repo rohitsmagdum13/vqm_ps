@@ -97,6 +97,28 @@ class PipelineConsumer:
             "updated_at": now,
         }
 
+        # Phase 6 — resume_context signals the graph to skip normal intake
+        # and jump to a special entry (e.g. resolution-from-notes on
+        # "prepare_resolution"). The entry-switch in graph.py reads this.
+        resume_context = body.get("resume_context")
+        if isinstance(resume_context, dict):
+            initial_state["resume_context"] = resume_context
+
+            # Surface prior pipeline output so the resolution-from-notes
+            # branch has the vendor_context and analysis_result it needs.
+            analysis_result = resume_context.get("analysis_result")
+            if isinstance(analysis_result, dict):
+                initial_state["analysis_result"] = analysis_result
+
+            if resume_context.get("action") == "prepare_resolution":
+                initial_state["resolution_mode"] = True
+                ticket_id = resume_context.get("ticket_id")
+                if ticket_id:
+                    initial_state["ticket_info"] = {
+                        "ticket_id": ticket_id,
+                        "ticket_number": ticket_id,
+                    }
+
         # Run the LangGraph pipeline
         result = await self._graph.ainvoke(initial_state)
 

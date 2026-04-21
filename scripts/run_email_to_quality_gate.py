@@ -1,12 +1,13 @@
 # ruff: noqa: E402
 """Script: run_email_to_quality_gate.py
 
-VQMS Full Email Pipeline: Graph API -> S3 -> SQS -> LangGraph -> Quality Gate.
+VQMS FULL Pipeline — Phase 1 (Intake) -> Phase 6 (Closure & Memory).
 
-This script runs the COMPLETE email-to-quality-gate pipeline in a single
-process, including a real SQS hop between intake and the AI pipeline:
+This script runs the COMPLETE end-to-end pipeline in a single process,
+including a real SQS hop between intake and the AI pipeline, ServiceNow
+ticket creation, email delivery, and all Phase 6 background services:
 
-  Phase 1 — Email Intake (Steps E1–E2.9):
+  Phase 1 — Email Intake (Steps E1 - E2.9):
     E1:     Fetch email from shared mailbox (MS Graph API)
     E2.1:   Idempotency check (PostgreSQL cache)
     E2.2:   Parse email fields (sender, subject, body, headers)
@@ -22,30 +23,49 @@ process, including a real SQS hop between intake and the AI pipeline:
   Phase 2 — SQS Consume:
     Pull the message from vqms-email-intake-queue (real SQS hop)
 
-  Phase 3 — AI Pipeline (Steps 7–11, no delivery):
+  Phase 3 — AI Pipeline (Steps 7 - 11):
     Step 7:   Context Loading (vendor profile, episodic memory)
     Step 8:   Query Analysis Agent (LLM Call #1 -> intent, entities, confidence)
     Step 8.5: Confidence Check (>= 0.85 -> pass, < 0.85 -> Path C)
-    Step 9A:  Routing (deterministic rules -> team, SLA)
+    Step 9A:  Routing (deterministic rules -> team, SLA + sla_checkpoints row)
     Step 9B:  KB Search (embed -> pgvector cosine similarity)
     Step 9.5: Path Decision (KB match >= 80% -> Path A, else -> Path B)
     Step 10:  Resolution draft (Path A) or Acknowledgment draft (Path B)
     Step 11:  Quality Gate (7 deterministic checks on draft email)
 
-  The graph ends at quality_gate -> END. No ServiceNow ticket creation,
-  no Graph API email send (Step 12 excluded).
+  Phase 4 — Delivery (Step 12):
+    Step 12:  Create ServiceNow ticket, swap PENDING -> INC number,
+              send email via Graph API, update final status.
+              On Path A success, register with ClosureService so the
+              auto-close timer starts.
+
+  Phase 6 — Background services (Steps 13, 16):
+    Step 13:  SlaMonitor.tick() — scan workflow.sla_checkpoints once,
+              publish any threshold events that have not yet fired.
+    Step 16:  Show workflow.closure_tracking row written by delivery,
+              run AutoCloseScheduler.tick() once (no-op unless the
+              auto-close deadline has already passed).
+              Optional: simulate ClosureService.close_case() to
+              demonstrate episodic memory write-back.
 
 Usage:
     uv run python scripts/run_email_to_quality_gate.py
     uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..."
     uv run python scripts/run_email_to_quality_gate.py --skip-salesforce
     uv run python scripts/run_email_to_quality_gate.py --no-sqs-hop
+    uv run python scripts/run_email_to_quality_gate.py --skip-delivery
+    uv run python scripts/run_email_to_quality_gate.py --no-email-send
+    uv run python scripts/run_email_to_quality_gate.py --skip-phase6
+    uv run python scripts/run_email_to_quality_gate.py --simulate-close
 
 Prerequisites:
-    1. .env configured with Graph API, AWS, PostgreSQL, Bedrock/OpenAI credentials
-    2. SQS queue (vqms-email-intake-queue) must exist (pre-provisioned)
-    3. S3 bucket (vqms-data-store) must exist (pre-provisioned)
+    1. .env configured with Graph API, AWS, PostgreSQL, Bedrock/OpenAI,
+       ServiceNow credentials.
+    2. SQS queue (vqms-email-intake-queue) must exist (pre-provisioned).
+    3. S3 bucket (vqms-data-store) must exist (pre-provisioned).
     4. KB articles seeded: uv run python scripts/seed_knowledge_base.py --clear
+    5. Migration 012 applied so workflow.sla_checkpoints,
+       workflow.closure_tracking, and memory.episodic_memory exist.
 """
 
 from __future__ import annotations
@@ -76,20 +96,28 @@ from events.eventbridge import EventBridgeConnector
 from adapters.graph_api import GraphAPIConnector
 from adapters.llm_gateway import LLMGateway
 from adapters.salesforce import SalesforceConnector
+from adapters.servicenow import ServiceNowConnector
 from db.connection import PostgresConnector
-from models.workflow import PipelineState
+from orchestration.graph import build_pipeline_graph
 from orchestration.nodes.acknowledgment import AcknowledgmentNode
 from orchestration.nodes.confidence_check import ConfidenceCheckNode
 from orchestration.nodes.context_loading import ContextLoadingNode
+from orchestration.nodes.delivery import DeliveryNode
 from orchestration.nodes.kb_search import KBSearchNode
 from orchestration.nodes.path_decision import PathDecisionNode
 from orchestration.nodes.quality_gate import QualityGateNode
 from orchestration.nodes.query_analysis import QueryAnalysisNode
 from orchestration.nodes.resolution import ResolutionNode
+from orchestration.nodes.resolution_from_notes import ResolutionFromNotesNode
 from orchestration.nodes.routing import RoutingNode
+from orchestration.nodes.triage import TriageNode
 from orchestration.prompts.prompt_manager import PromptManager
 from queues.sqs import SQSConnector
+from services.auto_close_scheduler import AutoCloseScheduler
+from services.closure import ClosureService
 from services.email_intake import EmailIntakeService
+from services.episodic_memory import EpisodicMemoryWriter
+from services.sla_monitor import SlaMonitor
 from storage.s3_client import S3Connector
 from utils.helpers import IdGenerator, TimeHelper
 from utils.logger import LoggingSetup
@@ -103,76 +131,6 @@ logger = logging.getLogger("scripts.run_email_to_quality_gate")
 for _noisy in ("botocore", "urllib3", "msal", "httpx", "httpcore",
                "openai._base_client", "pdfminer", "pdfplumber"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
-
-
-# ---------------------------------------------------------------------------
-# Build truncated graph (Steps 7-11, no delivery)
-# ---------------------------------------------------------------------------
-
-def build_quality_gate_graph(
-    context_loading_node: ContextLoadingNode,
-    query_analysis_node: QueryAnalysisNode,
-    confidence_check_node: ConfidenceCheckNode,
-    routing_node: RoutingNode,
-    kb_search_node: KBSearchNode,
-    path_decision_node: PathDecisionNode,
-    resolution_node: ResolutionNode,
-    acknowledgment_node: AcknowledgmentNode,
-    quality_gate_node: QualityGateNode,
-):
-    """Build a LangGraph pipeline that ends at quality_gate -> END.
-
-    Same structure as the full pipeline but quality_gate -> END
-    instead of quality_gate -> delivery -> END. This avoids needing
-    ServiceNow or Graph API connectors for the demo.
-    """
-    from langgraph.graph import END, StateGraph
-    from orchestration.graph import (
-        route_after_confidence_check,
-        route_after_path_decision,
-        triage_placeholder,
-    )
-
-    graph = StateGraph(PipelineState)
-
-    # Register nodes (Steps 7-11, no Step 12)
-    graph.add_node("context_loading", context_loading_node.execute)
-    graph.add_node("query_analysis", query_analysis_node.execute)
-    graph.add_node("confidence_check", confidence_check_node.execute)
-    graph.add_node("routing", routing_node.execute)
-    graph.add_node("kb_search", kb_search_node.execute)
-    graph.add_node("path_decision", path_decision_node.execute)
-    graph.add_node("resolution", resolution_node.execute)
-    graph.add_node("acknowledgment", acknowledgment_node.execute)
-    graph.add_node("quality_gate", quality_gate_node.execute)
-    graph.add_node("triage", triage_placeholder)
-
-    # Wire edges: START -> context_loading -> ... -> quality_gate -> END
-    graph.set_entry_point("context_loading")
-    graph.add_edge("context_loading", "query_analysis")
-    graph.add_edge("query_analysis", "confidence_check")
-
-    graph.add_conditional_edges(
-        "confidence_check",
-        route_after_confidence_check,
-        {"routing": "routing", "triage": "triage"},
-    )
-    graph.add_edge("triage", END)
-
-    graph.add_edge("routing", "kb_search")
-    graph.add_edge("kb_search", "path_decision")
-
-    graph.add_conditional_edges(
-        "path_decision",
-        route_after_path_decision,
-        {"resolution": "resolution", "acknowledgment": "acknowledgment"},
-    )
-
-    graph.add_edge("resolution", "quality_gate")
-    graph.add_edge("acknowledgment", "quality_gate")
-    graph.add_edge("quality_gate", END)
-
-    return graph.compile()
 
 
 # ---------------------------------------------------------------------------
@@ -208,38 +166,49 @@ def result(label: str, value: str, indent: int = 4) -> None:
 # Main pipeline
 # ---------------------------------------------------------------------------
 
-async def run_email_to_quality_gate(
+async def run_full_pipeline(
     *,
     message_id: str | None,
     skip_salesforce: bool,
     no_sqs_hop: bool,
+    skip_delivery: bool,
+    skip_phase6: bool,
+    simulate_close: bool,
+    no_email_send: bool,
 ) -> None:
-    """Run the full email pipeline: Graph API -> S3 -> SQS -> Pipeline -> Quality Gate.
+    """Run the full Phase 1 -> Phase 6 pipeline end to end.
 
     Phase 1: Email intake (Steps E1-E2.9) using real services.
     Phase 2: SQS consume (real message hop, unless --no-sqs-hop).
-    Phase 3: LangGraph AI pipeline (Steps 7-11, truncated at quality gate).
+    Phase 3: LangGraph AI pipeline (Steps 7-11).
+    Phase 4: Delivery (Step 12) -- ServiceNow ticket + Graph email.
+    Phase 6: SLA monitor tick, closure tracking, auto-close tick,
+             optional simulate-close -> episodic memory write.
     """
     settings = get_settings()
     pipeline_start = time.time()
 
-    banner("VQMS Full Email Pipeline: Email -> S3 -> SQS -> Quality Gate")
+    banner("VQMS Full Pipeline: Email -> Pipeline -> Delivery -> Phase 6")
     result("Mailbox", settings.graph_api_mailbox, indent=2)
     result("S3 Bucket", settings.s3_bucket_data_store, indent=2)
     result("SQS Queue", settings.sqs_email_intake_queue_url or "(not configured)", indent=2)
     result("LLM Provider", settings.llm_provider, indent=2)
     result("SQS Hop", "SKIP (direct)" if no_sqs_hop else "REAL (enqueue + receive)", indent=2)
     result("Skip Salesforce", str(skip_salesforce), indent=2)
-    print("\n    NOTE: Delivery (Step 12) is EXCLUDED from this run.")
+    result("Skip Delivery", str(skip_delivery), indent=2)
+    result("No Email Send", str(no_email_send), indent=2)
+    result("Skip Phase 6", str(skip_phase6), indent=2)
+    result("Simulate close_case", str(simulate_close), indent=2)
 
     graph_api: GraphAPIConnector | None = None
     postgres: PostgresConnector | None = None
+    servicenow: ServiceNowConnector | None = None
 
     try:
         # =================================================================
-        # Step 0: Initialize ALL connectors
+        # Step 0: Initialize ALL connectors + Phase 6 services
         # =================================================================
-        step_hdr("0", "Initialize connectors")
+        step_hdr("0", "Initialize connectors and Phase 6 services")
 
         # PostgreSQL (SSH tunnel -> RDS)
         print("    Connecting to PostgreSQL via SSH tunnel...")
@@ -261,6 +230,10 @@ async def run_email_to_quality_gate(
         graph_api = GraphAPIConnector(settings)
         result("Graph API", f"[OK] (mailbox: {settings.graph_api_mailbox})")
 
+        # ServiceNow (lazy httpx client)
+        servicenow = ServiceNowConnector(settings)
+        result("ServiceNow", "[OK] (lazy)")
+
         # Salesforce (or mock if skipped)
         if skip_salesforce:
             salesforce = AsyncMock()
@@ -278,6 +251,40 @@ async def run_email_to_quality_gate(
         # Prompt Manager
         prompt_manager = PromptManager()
         result("Prompt Manager", "[OK]")
+
+        # ---- Phase 6 services (all wired, whether or not we use them) ----
+        episodic_memory_writer = EpisodicMemoryWriter(
+            postgres=postgres, settings=settings, llm_gateway=llm_gateway,
+        )
+        result("EpisodicMemoryWriter", "[OK]")
+
+        closure_service = ClosureService(
+            postgres=postgres,
+            servicenow=servicenow,
+            eventbridge=eventbridge,
+            sqs=sqs,
+            episodic_memory_writer=episodic_memory_writer,
+            settings=settings,
+        )
+        result("ClosureService", "[OK]")
+
+        sla_monitor = SlaMonitor(
+            postgres=postgres,
+            eventbridge=eventbridge,
+            settings=settings,
+        )
+        result("SlaMonitor", f"[OK] (interval={settings.sla_monitor_interval_seconds}s)")
+
+        auto_close_scheduler = AutoCloseScheduler(
+            postgres=postgres,
+            closure_service=closure_service,
+            settings=settings,
+        )
+        result(
+            "AutoCloseScheduler",
+            f"[OK] (interval={settings.auto_close_interval_seconds}s, "
+            f"business_days={settings.auto_close_business_days})",
+        )
 
         # =================================================================
         # PHASE 1: Email Intake (Steps E1 - E2.9)
@@ -394,7 +401,10 @@ async def run_email_to_quality_gate(
 
             if parsed_email.attachments:
                 for att in parsed_email.attachments:
-                    result(f"  {att.filename}", f"{att.extraction_status} ({att.size_bytes} bytes)")
+                    result(
+                        f"  {att.filename}",
+                        f"{att.extraction_status} ({att.size_bytes} bytes)",
+                    )
 
             correlation_id = parsed_email.correlation_id
             query_id = parsed_email.query_id
@@ -476,11 +486,11 @@ async def run_email_to_quality_gate(
                     result("SQS delete", "[OK] Message deleted after processing")
 
         # =================================================================
-        # PHASE 3: LangGraph AI Pipeline (Steps 7-11, no delivery)
+        # PHASE 3 + PHASE 4: LangGraph AI Pipeline (Steps 7 - 12)
         # =================================================================
-        banner("PHASE 3: AI Pipeline (Steps 7 -> 11, Quality Gate)")
+        banner("PHASE 3 + 4: AI Pipeline (Steps 7 -> 11) + Delivery (Step 12)")
 
-        step_hdr("GRAPH", "Build truncated pipeline (quality_gate -> END)")
+        step_hdr("GRAPH", "Build full pipeline graph (entry -> ... -> delivery -> END)")
 
         context_loading = ContextLoadingNode(
             postgres=postgres, salesforce=salesforce, settings=settings,
@@ -489,7 +499,10 @@ async def run_email_to_quality_gate(
             bedrock=llm_gateway, prompt_manager=prompt_manager, settings=settings,
         )
         confidence_check = ConfidenceCheckNode(settings=settings)
-        routing = RoutingNode(settings=settings)
+        triage = TriageNode(
+            postgres=postgres, eventbridge=eventbridge, settings=settings,
+        )
+        routing = RoutingNode(settings=settings, postgres=postgres)
         kb_search = KBSearchNode(
             bedrock=llm_gateway, postgres=postgres, settings=settings,
         )
@@ -502,18 +515,95 @@ async def run_email_to_quality_gate(
         )
         quality_gate = QualityGateNode(settings=settings)
 
-        compiled_graph = build_quality_gate_graph(
+        # Delivery is the Phase 4 node. If --skip-delivery, we stub it out
+        # with an AsyncMock so the graph still compiles but does nothing at
+        # the delivery step — useful when ServiceNow/Graph send should not
+        # fire (e.g. running against production mailboxes during testing).
+        if skip_delivery:
+            delivery_stub = AsyncMock()
+
+            async def _stub_execute(state):
+                """Placeholder delivery that prints but never sends."""
+                print(
+                    "\n    [SKIP-DELIVERY] Step 12 stubbed — no ticket, "
+                    "no email send."
+                )
+                return {
+                    "ticket_info": None,
+                    "status": "DELIVERY_SKIPPED",
+                    "updated_at": TimeHelper.ist_now().isoformat(),
+                }
+
+            delivery_stub.execute = _stub_execute
+            delivery_node = delivery_stub
+            result("Delivery", "[STUB] --skip-delivery enabled")
+        else:
+            # --no-email-send keeps real ServiceNow ticket creation but
+            # swaps graph_api.send_email with a no-op so nothing actually
+            # lands in a vendor mailbox. This is the "keep ServiceNow,
+            # don't bother the vendor" mode for dev testing.
+            delivery_graph_api = graph_api
+            if no_email_send:
+                real_send = graph_api.send_email
+
+                async def _noop_send_email(
+                    *, to, subject, body_html, reply_to_message_id=None,
+                    correlation_id=None, **_kwargs,
+                ):
+                    """Stubbed send_email -- logs the intent but does not send."""
+                    print(
+                        f"    [NO-EMAIL-SEND] Would send to {to} "
+                        f"(subject: {subject[:60]!r})"
+                    )
+                    # Return the same dict shape the real send_email returns
+                    return {
+                        "sent": True,
+                        "stubbed": True,
+                        "to": to,
+                        "subject": subject,
+                    }
+
+                # Swap on the instance so DeliveryNode sees the stub.
+                # real_send stays referenced so ruff does not complain.
+                graph_api.send_email = _noop_send_email  # type: ignore[method-assign]
+                _ = real_send  # keep a reference; not called
+                result(
+                    "Graph API send_email",
+                    "[STUB] --no-email-send on; ticket will still be created",
+                )
+
+            delivery_node = DeliveryNode(
+                servicenow=servicenow,
+                graph_api=delivery_graph_api,
+                settings=settings,
+                eventbridge=eventbridge,
+                closure_service=closure_service,
+            )
+            result("Delivery", "[OK] (ServiceNow + Graph API + ClosureService wired)")
+
+        # Resolution-from-notes node (Step 15, only used on webhook re-entry)
+        resolution_from_notes = ResolutionFromNotesNode(
+            llm_gateway=llm_gateway,
+            prompt_manager=prompt_manager,
+            servicenow=servicenow,
+            settings=settings,
+        )
+
+        compiled_graph = build_pipeline_graph(
             context_loading_node=context_loading,
             query_analysis_node=query_analysis,
             confidence_check_node=confidence_check,
+            triage_node=triage,
             routing_node=routing,
             kb_search_node=kb_search,
             path_decision_node=path_decision,
             resolution_node=resolution,
             acknowledgment_node=acknowledgment,
             quality_gate_node=quality_gate,
+            delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes,
         )
-        result("Graph", "[OK] quality_gate -> END (no delivery)")
+        result("Graph", "[OK] full pipeline compiled (Steps 7 -> 12)")
 
         # Build initial PipelineState from the SQS payload
         now = TimeHelper.ist_now().isoformat()
@@ -534,7 +624,7 @@ async def run_email_to_quality_gate(
         result("Vendor ID", sqs_payload.get("vendor_id") or "None")
 
         # --- Run the pipeline ---
-        step_hdr("7-11", "Running LangGraph (context -> analysis -> routing -> draft -> QG)")
+        step_hdr("7-12", "Running LangGraph (context -> analysis -> routing -> draft -> QG -> delivery)")
 
         ai_start = time.time()
 
@@ -546,12 +636,11 @@ async def run_email_to_quality_gate(
             return
 
         ai_elapsed = time.time() - ai_start
-        total_elapsed = time.time() - pipeline_start
 
         # =================================================================
-        # Display Results
+        # Display Phase 3 Results (Steps 7 - 11)
         # =================================================================
-        banner("PIPELINE RESULTS")
+        banner("PIPELINE RESULTS (Steps 7 - 11)")
 
         # --- Analysis Result (Step 8) ---
         analysis = pipeline_result.get("analysis_result")
@@ -564,7 +653,11 @@ async def run_email_to_quality_gate(
             result("Multi-issue", str(analysis.get("multi_issue_detected", False)), indent=2)
             result("Category", analysis.get("suggested_category", "?"), indent=2)
             result("Model", analysis.get("model_id", "?"), indent=2)
-            result("Tokens in/out", f"{analysis.get('tokens_in', '?')} / {analysis.get('tokens_out', '?')}", indent=2)
+            result(
+                "Tokens in/out",
+                f"{analysis.get('tokens_in', '?')} / {analysis.get('tokens_out', '?')}",
+                indent=2,
+            )
             result("Analysis time", f"{analysis.get('analysis_duration_ms', '?')}ms", indent=2)
 
             entities = analysis.get("extracted_entities", {})
@@ -645,7 +738,11 @@ async def run_email_to_quality_gate(
             result("Subject", draft.get("subject", "?"), indent=2)
             result("Confidence", str(draft.get("confidence", "?")), indent=2)
             result("Model", draft.get("model_id", "?"), indent=2)
-            result("Tokens in/out", f"{draft.get('tokens_in', '?')} / {draft.get('tokens_out', '?')}", indent=2)
+            result(
+                "Tokens in/out",
+                f"{draft.get('tokens_in', '?')} / {draft.get('tokens_out', '?')}",
+                indent=2,
+            )
             result("Draft time", f"{draft.get('draft_duration_ms', '?')}ms", indent=2)
 
             sources = draft.get("sources", [])
@@ -680,46 +777,273 @@ async def run_email_to_quality_gate(
         elif processing_path != "C":
             result("Quality Gate", "[NOT REACHED]", indent=2)
 
-        # --- Final Status ---
-        print("\n  --- Pipeline Status ---")
+        # =================================================================
+        # Phase 4 Delivery Results (Step 12)
+        # =================================================================
+        banner("DELIVERY RESULTS (Step 12)")
+
+        ticket_info = pipeline_result.get("ticket_info")
+        final_status = pipeline_result.get("status", "?")
+
+        if skip_delivery:
+            print("  [SKIP-DELIVERY] Delivery was stubbed out via CLI flag.")
+            print("  No ServiceNow ticket created, no email sent.")
+        elif ticket_info:
+            print("  --- ServiceNow Ticket ---")
+            result("Ticket Number", ticket_info.get("ticket_number")
+                   or ticket_info.get("ticket_id", "?"), indent=2)
+            result("Query ID", ticket_info.get("query_id", "?"), indent=2)
+            result("Status", ticket_info.get("status", "?"), indent=2)
+            result("Assigned Team", ticket_info.get("assigned_team", "?"), indent=2)
+            result("SLA Deadline", str(ticket_info.get("sla_deadline", "?")), indent=2)
+            result("Created At", str(ticket_info.get("created_at", "?")), indent=2)
+
+            print("\n  --- Email Send ---")
+            if final_status == "DELIVERY_FAILED":
+                result("Send Status", "[FAILED] " + str(pipeline_result.get("error", "")), indent=2)
+            elif processing_path == "A":
+                result(
+                    "Email Type",
+                    "RESOLUTION (full answer -> vendor)",
+                    indent=2,
+                )
+                result("Send Status", "[SENT via Graph API]", indent=2)
+                result("Final Status", "RESOLVED (Path A -- ticket for monitoring)", indent=2)
+            elif processing_path == "B":
+                result(
+                    "Email Type",
+                    "ACKNOWLEDGMENT (no answer -- team investigating)",
+                    indent=2,
+                )
+                result("Send Status", "[SENT via Graph API]", indent=2)
+                result(
+                    "Final Status",
+                    "AWAITING_RESOLUTION (Path B -- human team investigates)",
+                    indent=2,
+                )
+            else:
+                result("Email Type", "(unknown)", indent=2)
+                result("Final Status", final_status, indent=2)
+        else:
+            print(f"  [NO TICKET] final_status={final_status}")
+            if pipeline_result.get("error"):
+                result("Error", str(pipeline_result["error"]), indent=2)
+
+        # =================================================================
+        # PHASE 6: SLA Monitor + Closure Tracking + Auto-Close
+        # =================================================================
+        phase6_elapsed = 0.0
+        if skip_phase6:
+            banner("PHASE 6: SKIPPED (--skip-phase6)")
+        else:
+            banner("PHASE 6: SLA Monitor + Closure Tracking + Auto-Close")
+            phase6_start = time.time()
+
+            # ---- Read the sla_checkpoints row the Routing node wrote ----
+            step_hdr("13.0", "Check workflow.sla_checkpoints row (from Routing node)")
+            try:
+                checkpoint_row = await postgres.fetchrow(
+                    """
+                    SELECT query_id, sla_started_at, sla_deadline,
+                           warning_fired, l1_fired, l2_fired,
+                           last_status, last_checked_at
+                    FROM workflow.sla_checkpoints
+                    WHERE query_id = $1
+                    """,
+                    query_id,
+                )
+            except Exception as exc:
+                checkpoint_row = None
+                result("Checkpoint read", f"[ERROR] {exc}", indent=2)
+
+            if checkpoint_row:
+                result("Query ID", checkpoint_row.get("query_id", "?"), indent=2)
+                result("Started At", str(checkpoint_row.get("sla_started_at", "?")), indent=2)
+                result("Deadline", str(checkpoint_row.get("sla_deadline", "?")), indent=2)
+                result("Warning Fired", str(checkpoint_row.get("warning_fired", "?")), indent=2)
+                result("L1 Fired", str(checkpoint_row.get("l1_fired", "?")), indent=2)
+                result("L2 Fired", str(checkpoint_row.get("l2_fired", "?")), indent=2)
+                result("Last Status", checkpoint_row.get("last_status", "?"), indent=2)
+            else:
+                print("    [INFO] No sla_checkpoints row found for this query.")
+                print("    (Path C or non-critical INSERT failure -- not an error)")
+
+            # ---- SlaMonitor.tick() once ----
+            step_hdr("13.1", "Run SlaMonitor.tick() once")
+            try:
+                tick_correlation_id = IdGenerator.generate_correlation_id()
+                events_published = await sla_monitor.tick(
+                    correlation_id=tick_correlation_id,
+                )
+                result(
+                    "Events published this tick",
+                    str(events_published),
+                    indent=2,
+                )
+                print(
+                    "    (Fresh cases have far-away deadlines, so a single "
+                    "tick usually publishes 0 events.)"
+                )
+            except Exception as exc:
+                result("SlaMonitor.tick", f"[ERROR] {exc}", indent=2)
+                logger.exception("SlaMonitor tick failed")
+
+            # ---- Read workflow.closure_tracking row (if delivery ran) ----
+            step_hdr("16.1", "Check workflow.closure_tracking (from delivery hook)")
+            try:
+                closure_row = await postgres.fetchrow(
+                    """
+                    SELECT query_id, resolution_sent_at, auto_close_deadline,
+                           closed_at, closed_reason,
+                           vendor_confirmation_detected_at
+                    FROM workflow.closure_tracking
+                    WHERE query_id = $1
+                    """,
+                    query_id,
+                )
+            except Exception as exc:
+                closure_row = None
+                result("Closure read", f"[ERROR] {exc}", indent=2)
+
+            if closure_row:
+                result("Query ID", closure_row.get("query_id", "?"), indent=2)
+                result(
+                    "Resolution Sent At",
+                    str(closure_row.get("resolution_sent_at", "?")),
+                    indent=2,
+                )
+                result(
+                    "Auto-Close Deadline",
+                    str(closure_row.get("auto_close_deadline", "?")),
+                    indent=2,
+                )
+                result("Closed At", str(closure_row.get("closed_at") or "(open)"), indent=2)
+                result("Closed Reason", closure_row.get("closed_reason") or "(open)", indent=2)
+            else:
+                print("    [INFO] No closure_tracking row found.")
+                print(
+                    "    (Expected if Path B first-send, Path C, or "
+                    "--skip-delivery was used.)"
+                )
+
+            # ---- AutoCloseScheduler.tick() once ----
+            step_hdr("16.2", "Run AutoCloseScheduler.tick() once")
+            try:
+                auto_close_cid = IdGenerator.generate_correlation_id()
+                closed_this_tick = await auto_close_scheduler.tick(
+                    correlation_id=auto_close_cid,
+                )
+                result("Cases closed this tick", str(closed_this_tick), indent=2)
+                print(
+                    f"    (Deadline is {settings.auto_close_business_days} "
+                    "business days out so a fresh case won't close yet.)"
+                )
+            except Exception as exc:
+                result("AutoCloseScheduler.tick", f"[ERROR] {exc}", indent=2)
+                logger.exception("AutoCloseScheduler tick failed")
+
+            # ---- Optional: simulate ClosureService.close_case ----
+            step_hdr("16.3", "Simulate close_case (optional)")
+            if simulate_close and closure_row and closure_row.get("closed_at") is None:
+                print(
+                    "    --simulate-close flag ON and closure row is open --"
+                    " calling close_case(VENDOR_CONFIRMED)..."
+                )
+                try:
+                    await closure_service.close_case(
+                        query_id=query_id,
+                        reason="VENDOR_CONFIRMED",
+                        correlation_id=correlation_id,
+                    )
+                    result("close_case", "[OK] simulated", indent=2)
+
+                    # Show the episodic_memory row that was just written
+                    mem_row = await postgres.fetchrow(
+                        """
+                        SELECT memory_id, vendor_id, query_id, intent,
+                               resolution_path, outcome, resolved_at, summary
+                        FROM memory.episodic_memory
+                        WHERE query_id = $1
+                        ORDER BY resolved_at DESC
+                        LIMIT 1
+                        """,
+                        query_id,
+                    )
+                    if mem_row:
+                        print("\n    --- memory.episodic_memory (just written) ---")
+                        result("Memory ID", mem_row.get("memory_id", "?"), indent=4)
+                        result("Vendor ID", mem_row.get("vendor_id", "?"), indent=4)
+                        result("Intent", mem_row.get("intent", "?"), indent=4)
+                        result("Path", mem_row.get("resolution_path", "?"), indent=4)
+                        result("Outcome", mem_row.get("outcome", "?"), indent=4)
+                        result(
+                            "Resolved At",
+                            str(mem_row.get("resolved_at", "?")),
+                            indent=4,
+                        )
+                        summary_txt = mem_row.get("summary") or ""
+                        if summary_txt:
+                            print(f"        Summary: {summary_txt}")
+                    else:
+                        print("    [INFO] No episodic_memory row written (non-critical failure).")
+                except Exception as exc:
+                    result("close_case", f"[ERROR] {exc}", indent=2)
+                    logger.exception("close_case simulation failed")
+            elif simulate_close:
+                print("    --simulate-close set but no open closure row -- skipping.")
+            else:
+                print(
+                    "    Skipped. Pass --simulate-close to demonstrate "
+                    "close_case + episodic_memory write-back."
+                )
+
+            phase6_elapsed = time.time() - phase6_start
+
+        # =================================================================
+        # Final Status + Timing Summary
+        # =================================================================
+        banner("FINAL STATUS")
+        total_elapsed = time.time() - pipeline_start
+
+        print("  --- Pipeline Status ---")
         result("Final status", pipeline_result.get("status", "?"), indent=2)
         result("Processing path", processing_path or "?", indent=2)
-
         error = pipeline_result.get("error")
         if error:
             result("Error", str(error), indent=2)
 
-        # --- Timing Summary ---
         print(f"\n{SUBDIV}")
         print("  --- Timing ---")
         result("Phase 1 (email intake)", f"{phase1_elapsed:.1f}s", indent=2)
-        result("Phase 3 (AI pipeline)", f"{ai_elapsed:.1f}s", indent=2)
+        result("Phase 2+3+4 (SQS + AI + delivery)", f"{ai_elapsed:.1f}s", indent=2)
+        if not skip_phase6:
+            result("Phase 6 (SLA + closure + auto-close)", f"{phase6_elapsed:.1f}s", indent=2)
         result("Total end-to-end", f"{total_elapsed:.1f}s", indent=2)
 
-        # --- What Would Happen Next ---
+        # --- What's still downstream (outside this script's scope) ---
         print(f"\n{SUBDIV}")
-        print("  --- What Would Happen Next (Step 12 - EXCLUDED) ---")
-        if processing_path == "A":
-            print("    1. Delivery node creates ServiceNow ticket (INC-XXXXXXX)")
-            print("    2. Replace 'PENDING' in draft with real ticket number")
-            print("    3. Send RESOLUTION email to vendor via Graph API")
-            print("    4. Status -> RESOLVED")
-        elif processing_path == "B":
-            print("    1. Delivery node creates ServiceNow ticket (INC-XXXXXXX)")
-            print("    2. Replace 'PENDING' in draft with real ticket number")
-            print("    3. Send ACKNOWLEDGMENT email to vendor via Graph API")
-            print("    4. Status -> AWAITING_RESOLUTION (human team investigates)")
-        elif processing_path == "C":
-            print("    Workflow PAUSED for human review. No delivery.")
+        print("  --- What continues downstream (out of scope for this script) ---")
+        print("    * SlaMonitor / AutoCloseScheduler normally run forever via lifespan")
+        print("    * On a real Path B case: ServiceNow webhook -> re-enqueue")
+        print("      with resume_context.action='prepare_resolution' -> graph")
+        print("      entry-switch routes to resolution_from_notes -> quality_gate")
+        print("      -> delivery (resolution_mode) -> status AWAITING_VENDOR_CONFIRMATION")
+        print("    * Vendor confirmation reply triggers ClosureService.detect_confirmation")
+        print("      -> close_case(VENDOR_CONFIRMED) -> episodic memory row saved")
         print()
 
     except Exception:
-        logger.exception("Email-to-quality-gate pipeline failed")
+        logger.exception("Full pipeline failed")
         print("\n    [FAIL] Pipeline failed -- check logs above for details")
         raise
     finally:
         if graph_api:
             await graph_api.close()
+        if servicenow:
+            try:
+                await servicenow.close()
+            except Exception:
+                pass
         if postgres:
             await postgres.disconnect()
         print("    Connectors closed.\n")
@@ -730,24 +1054,31 @@ async def run_email_to_quality_gate(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    """Parse CLI args and run the full email-to-quality-gate pipeline."""
+    """Parse CLI args and run the full Phase 1 -> Phase 6 pipeline."""
     parser = argparse.ArgumentParser(
         description=(
-            "VQMS: Full email pipeline — Graph API -> S3 -> SQS -> "
-            "LangGraph (Steps 7-11) -> Quality Gate"
+            "VQMS: FULL pipeline — Graph API -> S3 -> SQS -> "
+            "LangGraph (Steps 7-12) -> Phase 6 (SLA + Closure + Memory)"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "Examples:\n"
-            "  # Process first unread email (full flow with SQS hop)\n"
+            "  # Full flow on first unread email (SQS hop + real delivery + Phase 6)\n"
             "  uv run python scripts/run_email_to_quality_gate.py\n\n"
             "  # Process a specific email by message_id\n"
             "  uv run python scripts/run_email_to_quality_gate.py "
             '--message-id "AAMkAGI2..."\n\n'
+            "  # Stop before delivery (no ServiceNow ticket, no email send)\n"
+            "  uv run python scripts/run_email_to_quality_gate.py "
+            "--skip-delivery --skip-phase6\n\n"
+            "  # Keep ServiceNow (real ticket) but do NOT email the vendor\n"
+            "  uv run python scripts/run_email_to_quality_gate.py --no-email-send\n\n"
             "  # Skip SQS hop (email intake -> pipeline directly)\n"
             "  uv run python scripts/run_email_to_quality_gate.py --no-sqs-hop\n\n"
             "  # Skip Salesforce vendor lookup\n"
-            "  uv run python scripts/run_email_to_quality_gate.py --skip-salesforce\n"
+            "  uv run python scripts/run_email_to_quality_gate.py --skip-salesforce\n\n"
+            "  # Run the full pipeline AND simulate vendor confirmation\n"
+            "  uv run python scripts/run_email_to_quality_gate.py --simulate-close\n"
         ),
     )
     parser.add_argument(
@@ -765,16 +1096,49 @@ def main() -> None:
     parser.add_argument(
         "--no-sqs-hop",
         action="store_true",
-        help="Skip real SQS enqueue/receive — pass payload directly to pipeline. "
+        help="Skip real SQS enqueue/receive -- pass payload directly to pipeline. "
              "Use this if SQS queue URL is not configured.",
+    )
+    parser.add_argument(
+        "--skip-delivery",
+        action="store_true",
+        help="Stub out Step 12 (Delivery) -- no ServiceNow ticket is created "
+             "and no email is sent. Useful for testing the pipeline without "
+             "touching ServiceNow or the mailbox.",
+    )
+    parser.add_argument(
+        "--no-email-send",
+        action="store_true",
+        help="Keep real ServiceNow ticket creation but stub out the "
+             "Graph API email send. Use this when you want a real INC number "
+             "and the closure_tracking row, but do NOT want to actually "
+             "email the vendor from the shared mailbox.",
+    )
+    parser.add_argument(
+        "--skip-phase6",
+        action="store_true",
+        help="Skip the Phase 6 demonstration section (SLA Monitor tick, "
+             "closure tracking inspection, AutoCloseScheduler tick, "
+             "optional close_case simulation).",
+    )
+    parser.add_argument(
+        "--simulate-close",
+        action="store_true",
+        help="After delivery, call ClosureService.close_case with reason "
+             "VENDOR_CONFIRMED to demonstrate the closure path and the "
+             "episodic_memory write-back.",
     )
     args = parser.parse_args()
 
     asyncio.run(
-        run_email_to_quality_gate(
+        run_full_pipeline(
             message_id=args.message_id,
             skip_salesforce=args.skip_salesforce,
             no_sqs_hop=args.no_sqs_hop,
+            skip_delivery=args.skip_delivery,
+            skip_phase6=args.skip_phase6,
+            simulate_close=args.simulate_close,
+            no_email_send=args.no_email_send,
         )
     )
 

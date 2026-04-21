@@ -122,11 +122,14 @@ class TestPathA:
             "status": "RESOLVED",
             "updated_at": now,
         })
+        triage_node = _make_mock_node({})
+        resolution_from_notes_node = _make_mock_node({})
 
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
             confidence_check_node=confidence_node,
+            triage_node=triage_node,
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
@@ -134,6 +137,7 @@ class TestPathA:
             acknowledgment_node=acknowledgment_node,
             quality_gate_node=quality_gate_node,
             delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes_node,
         )
 
         result = await compiled.ainvoke(_base_state())
@@ -152,6 +156,9 @@ class TestPathA:
         resolution_node.execute.assert_called_once()
         quality_gate_node.execute.assert_called_once()
         delivery_node.execute.assert_called_once()
+        # Path A should never touch triage or resolution-from-notes
+        triage_node.execute.assert_not_called()
+        resolution_from_notes_node.execute.assert_not_called()
 
 
 class TestPathB:
@@ -228,11 +235,14 @@ class TestPathB:
             "status": "RESOLVED",
             "updated_at": now,
         })
+        triage_node = _make_mock_node({})
+        resolution_from_notes_node = _make_mock_node({})
 
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
             confidence_check_node=confidence_node,
+            triage_node=triage_node,
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
@@ -240,6 +250,7 @@ class TestPathB:
             acknowledgment_node=acknowledgment_node,
             quality_gate_node=quality_gate_node,
             delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes_node,
         )
 
         result = await compiled.ainvoke(_base_state())
@@ -250,6 +261,9 @@ class TestPathB:
         kb_node.execute.assert_called_once()
         acknowledgment_node.execute.assert_called_once()
         delivery_node.execute.assert_called_once()
+        # Path B should never touch triage or resolution-from-notes
+        triage_node.execute.assert_not_called()
+        resolution_from_notes_node.execute.assert_not_called()
 
 
 class TestPathC:
@@ -281,9 +295,18 @@ class TestPathC:
             },
             "updated_at": now,
         })
-        # Confidence < 0.85 → Path C
+        # Confidence < 0.85 → Path C. The confidence node sets the path;
+        # the triage node then persists the package and marks PAUSED.
         confidence_node = _make_mock_node({
             "processing_path": "C",
+            "updated_at": now,
+        })
+        triage_node = _make_mock_node({
+            "triage_package": {
+                "query_id": "VQ-2026-0001",
+                "callback_token": "test-token-abc",
+                "status": "PENDING",
+            },
             "status": "PAUSED",
             "updated_at": now,
         })
@@ -296,11 +319,13 @@ class TestPathC:
         acknowledgment_node = _make_mock_node({})
         quality_gate_node = _make_mock_node({})
         delivery_node = _make_mock_node({})
+        resolution_from_notes_node = _make_mock_node({})
 
         compiled = build_pipeline_graph(
             context_loading_node=context_node,
             query_analysis_node=analysis_node,
             confidence_check_node=confidence_node,
+            triage_node=triage_node,
             routing_node=routing_node,
             kb_search_node=kb_node,
             path_decision_node=path_node,
@@ -308,19 +333,24 @@ class TestPathC:
             acknowledgment_node=acknowledgment_node,
             quality_gate_node=quality_gate_node,
             delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes_node,
         )
 
         result = await compiled.ainvoke(_base_state())
 
         assert result["processing_path"] == "C"
         assert result["status"] == "PAUSED"
+        assert result["triage_package"]["callback_token"] == "test-token-abc"
 
+        # Triage runs once and workflow stops there
+        triage_node.execute.assert_called_once()
         # Routing, KB search, and Phase 4 nodes should NOT have been called
         routing_node.execute.assert_not_called()
         kb_node.execute.assert_not_called()
         path_node.execute.assert_not_called()
         resolution_node.execute.assert_not_called()
         delivery_node.execute.assert_not_called()
+        resolution_from_notes_node.execute.assert_not_called()
 
 
 class TestGraphStructure:
@@ -334,6 +364,7 @@ class TestGraphStructure:
             context_loading_node=mock_node,
             query_analysis_node=mock_node,
             confidence_check_node=mock_node,
+            triage_node=mock_node,
             routing_node=mock_node,
             kb_search_node=mock_node,
             path_decision_node=mock_node,
@@ -341,6 +372,204 @@ class TestGraphStructure:
             acknowledgment_node=mock_node,
             quality_gate_node=mock_node,
             delivery_node=mock_node,
+            resolution_from_notes_node=mock_node,
         )
         # compiled graph should have an ainvoke method
         assert hasattr(compiled, "ainvoke")
+
+
+class TestStep15ResolutionFromNotes:
+    """Phase 6 Step 15 — resume_context routes directly to resolution_from_notes."""
+
+    @pytest.mark.asyncio
+    async def test_resume_skips_intake_and_goes_to_resolution_from_notes(self) -> None:
+        """resume_context.action=prepare_resolution bypasses context/analysis/routing."""
+        now = TimeHelper.ist_now().isoformat()
+
+        # Nodes that MUST NOT run on the resume path
+        context_node = _make_mock_node({})
+        analysis_node = _make_mock_node({})
+        confidence_node = _make_mock_node({})
+        routing_node = _make_mock_node({})
+        kb_node = _make_mock_node({})
+        path_node = _make_mock_node({})
+        resolution_node = _make_mock_node({})
+        acknowledgment_node = _make_mock_node({})
+        triage_node = _make_mock_node({})
+
+        # Nodes that DO run on the resume path: resolution_from_notes → gate → delivery
+        resolution_from_notes_node = _make_mock_node({
+            "draft_response": {
+                "draft_type": "RESOLUTION",
+                "subject": "Re: Invoice discrepancy [INC1234567]",
+                "body": "resolved",
+                "confidence": 0.9,
+                "sources": ["team-notes"],
+            },
+            "status": "VALIDATING",
+            "updated_at": now,
+        })
+        quality_gate_node = _make_mock_node({
+            "quality_gate_result": {
+                "passed": True,
+                "checks_run": 7,
+                "checks_passed": 7,
+                "failed_checks": [],
+            },
+            "status": "DELIVERING",
+            "updated_at": now,
+        })
+        delivery_node = _make_mock_node({
+            "ticket_info": {"ticket_id": "INC1234567"},
+            "status": "RESOLVED",
+            "updated_at": now,
+        })
+
+        compiled = build_pipeline_graph(
+            context_loading_node=context_node,
+            query_analysis_node=analysis_node,
+            confidence_check_node=confidence_node,
+            triage_node=triage_node,
+            routing_node=routing_node,
+            kb_search_node=kb_node,
+            path_decision_node=path_node,
+            resolution_node=resolution_node,
+            acknowledgment_node=acknowledgment_node,
+            quality_gate_node=quality_gate_node,
+            delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes_node,
+        )
+
+        state = _base_state()
+        state["resume_context"] = {
+            "action": "prepare_resolution",
+            "from_servicenow": True,
+            "ticket_id": "INC1234567",
+        }
+        state["ticket_info"] = {"ticket_number": "INC1234567"}
+
+        result = await compiled.ainvoke(state)
+
+        # Resume branch ran end-to-end
+        resolution_from_notes_node.execute.assert_called_once()
+        quality_gate_node.execute.assert_called_once()
+        delivery_node.execute.assert_called_once()
+
+        # Intake-side nodes never touched
+        context_node.execute.assert_not_called()
+        analysis_node.execute.assert_not_called()
+        confidence_node.execute.assert_not_called()
+        routing_node.execute.assert_not_called()
+        kb_node.execute.assert_not_called()
+        path_node.execute.assert_not_called()
+        resolution_node.execute.assert_not_called()
+        acknowledgment_node.execute.assert_not_called()
+        triage_node.execute.assert_not_called()
+
+        assert result["status"] == "RESOLVED"
+
+    @pytest.mark.asyncio
+    async def test_resume_with_wrong_action_takes_normal_path(self) -> None:
+        """An unrelated resume_context (e.g. is_reopen) takes the normal intake path."""
+        now = TimeHelper.ist_now().isoformat()
+
+        # Give the normal-path nodes realistic returns so the graph reaches delivery
+        context_node = _make_mock_node({
+            "vendor_context": {"vendor_id": "V-001", "vendor_profile": {"vendor_name": "TechNova"}},
+            "status": "ANALYZING",
+            "updated_at": now,
+        })
+        analysis_node = _make_mock_node({
+            "analysis_result": {
+                "intent_classification": "invoice_inquiry",
+                "confidence_score": 0.92,
+                "urgency_level": "HIGH",
+                "sentiment": "NEUTRAL",
+                "suggested_category": "billing",
+                "extracted_entities": {},
+                "multi_issue_detected": False,
+                "tokens_in": 1500,
+                "tokens_out": 450,
+                "model_id": "test-model",
+                "analysis_duration_ms": 2500,
+            },
+            "updated_at": now,
+        })
+        confidence_node = _make_mock_node({"updated_at": now})
+        routing_node = _make_mock_node({
+            "routing_decision": {
+                "assigned_team": "finance-ops",
+                "category": "billing",
+                "priority": "HIGH",
+                "sla_target": {"total_hours": 4},
+                "routing_reason": "test",
+                "requires_human_investigation": False,
+            },
+            "updated_at": now,
+        })
+        kb_node = _make_mock_node({
+            "kb_search_result": {
+                "matches": [],
+                "best_match_score": None,
+                "has_sufficient_match": False,
+                "search_duration_ms": 100,
+                "query_embedding_model": "titan-embed-v2",
+            },
+            "updated_at": now,
+        })
+        path_node = _make_mock_node({
+            "processing_path": "B",
+            "status": "DRAFTING",
+            "updated_at": now,
+        })
+        resolution_node = _make_mock_node({})
+        acknowledgment_node = _make_mock_node({
+            "draft_response": {
+                "draft_type": "ACKNOWLEDGMENT",
+                "subject": "Re: Test",
+                "body": "ack",
+                "confidence": 0.9,
+                "sources": [],
+            },
+            "status": "VALIDATING",
+            "updated_at": now,
+        })
+        quality_gate_node = _make_mock_node({
+            "quality_gate_result": {"passed": True, "checks_run": 7, "checks_passed": 7, "failed_checks": []},
+            "status": "DELIVERING",
+            "updated_at": now,
+        })
+        delivery_node = _make_mock_node({
+            "ticket_info": {"ticket_id": "INC-0000002"},
+            "status": "RESOLVED",
+            "updated_at": now,
+        })
+        triage_node = _make_mock_node({})
+        resolution_from_notes_node = _make_mock_node({})
+
+        compiled = build_pipeline_graph(
+            context_loading_node=context_node,
+            query_analysis_node=analysis_node,
+            confidence_check_node=confidence_node,
+            triage_node=triage_node,
+            routing_node=routing_node,
+            kb_search_node=kb_node,
+            path_decision_node=path_node,
+            resolution_node=resolution_node,
+            acknowledgment_node=acknowledgment_node,
+            quality_gate_node=quality_gate_node,
+            delivery_node=delivery_node,
+            resolution_from_notes_node=resolution_from_notes_node,
+        )
+
+        state = _base_state()
+        # A reopen resume context does NOT go to resolution_from_notes — it
+        # should walk through context_loading like a fresh run.
+        state["resume_context"] = {"is_reopen": True}
+
+        await compiled.ainvoke(state)
+
+        context_node.execute.assert_called_once()
+        analysis_node.execute.assert_called_once()
+        # The resolution-from-notes branch must stay untouched
+        resolution_from_notes_node.execute.assert_not_called()
