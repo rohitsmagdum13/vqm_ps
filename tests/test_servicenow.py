@@ -162,9 +162,9 @@ class TestCreateTicket:
 
         call_args = snow_connector._client.post.call_args
         payload = call_args.kwargs.get("json", {})
-        assert payload["u_query_id"] == "VQ-2026-0001"
-        assert payload["u_vendor_id"] == "V-001"
-        assert payload["u_vendor_name"] == "TechNova Solutions"
+        assert payload["u_vqms_query_id"] == "VQ-2026-0001"
+        assert payload["u_vqms_vendor_id"] == "V-001"
+        assert payload["u_vqms_vendor_name"] == "TechNova Solutions"
 
     async def test_posts_to_correct_url(
         self, snow_connector, sample_ticket_request
@@ -180,6 +180,32 @@ class TestCreateTicket:
 
         call_args = snow_connector._client.post.call_args
         assert call_args.args[0] == "https://test.service-now.com/api/now/table/incident"
+
+    async def test_work_notes_breadcrumb_included(
+        self, snow_connector, sample_ticket_request
+    ) -> None:
+        """Every created ticket carries a VQMS provenance breadcrumb on the
+        ServiceNow Activity log (internal-only work_notes field)."""
+        snow_connector._client.post.return_value = _mock_post_response(
+            _sample_incident_record()
+        )
+
+        await snow_connector.create_ticket(
+            sample_ticket_request, correlation_id="test-006"
+        )
+
+        call_args = snow_connector._client.post.call_args
+        payload = call_args.kwargs.get("json", {})
+        work_notes = payload.get("work_notes", "")
+        # Spot-check the fields that ops will actually look for — the
+        # "Created by VQMS" header (filterable string) and each ID so the
+        # ticket can be cross-referenced back to a VQMS case.
+        assert "Created by VQMS" in work_notes
+        assert "VQ-2026-0001" in work_notes
+        assert "V-001" in work_notes
+        assert "TechNova Solutions" in work_notes
+        assert "HIGH" in work_notes
+        assert "SLA 4h" in work_notes
 
 
 # ===========================
@@ -366,8 +392,14 @@ class TestLazyInit:
         assert connector._client is None
 
     def test_missing_instance_url_raises(self, mock_settings) -> None:
-        """Missing SERVICENOW_INSTANCE_URL raises ServiceNowConnectorError."""
+        """Missing both SERVICENOW_INSTANCE_URL and SERVICENOW_INSTANCE_NAME
+        raises ServiceNowConnectorError.
+
+        The adapter now accepts either form, so both must be unset
+        to trigger the "not configured" error.
+        """
         mock_settings.servicenow_instance_url = None
+        mock_settings.servicenow_instance_name = None
         connector = ServiceNowConnector(mock_settings)
 
         with pytest.raises(ServiceNowConnectorError, match="SERVICENOW_INSTANCE_URL"):

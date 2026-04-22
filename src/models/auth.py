@@ -78,6 +78,10 @@ class LoginResponse(BaseModel):
 
     token: str = Field(description="JWT access token")
     user_name: str = Field(description="Authenticated username")
+    full_name: str | None = Field(
+        default=None,
+        description="Display name composed from first_name + last_name in tbl_user_roles",
+    )
     email: str = Field(description="User's email address")
     role: str = Field(description="User role (ADMIN, VENDOR, REVIEWER)")
     tenant: str = Field(description="User's tenant/organization")

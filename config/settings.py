@@ -281,6 +281,41 @@ class Settings(BaseSettings):
     kb_max_results: int = 5
     kb_resolution_confidence_threshold: float = 0.85
 
+    # ===========================
+    # EMAIL RELEVANCE FILTER
+    # ===========================
+    # Minimum non-whitespace chars across (subject + body) required
+    # for an email to be considered substantive enough for the AI
+    # pipeline. Kept small so a short-but-real query like
+    # "Invoice INV-5678 is $0, please check" still passes.
+    email_filter_min_chars: int = 30
+
+    # Case-insensitive words/phrases that, when they make up the
+    # entire meaningful content of an email, mark it as noise.
+    # Matched against the stripped subject+body text.
+    email_filter_noise_patterns: list[str] = [
+        "hi",
+        "hello",
+        "hey",
+        "thanks",
+        "thank you",
+        "ok",
+        "okay",
+        "noted",
+        "received",
+        "got it",
+        "test",
+    ]
+
+    # Gated off in dev to avoid spending on Haiku for every borderline
+    # email. Enable in staging/prod once we've seen real traffic.
+    email_filter_use_llm_classifier: bool = False
+
+    # Sender domains always allowed even when Salesforce cannot resolve
+    # the vendor (e.g. a newly-onboarded vendor whose contact isn't
+    # synced yet). Leave empty to reject every unresolved sender.
+    email_filter_allowed_sender_domains: list[str] = []
+
 
 # Module-level singleton — created once, reused across the app
 _settings: Settings | None = None

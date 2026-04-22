@@ -9,10 +9,33 @@ is parsed into an EmailAttachment list and a ParsedEmailPayload.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+
+# Actions the EmailRelevanceFilter can request after classifying an email.
+# "drop"                   — silently discard (auto-reply/newsletter/unknown sender noise)
+# "auto_reply_ask_details" — send a templated reply asking the vendor for more info
+# "thread_only"            — skip AI analysis but still run closure/reopen detection
+RelevanceAction = Literal["drop", "auto_reply_ask_details", "thread_only"]
+
+
+@dataclass(frozen=True)
+class RelevanceDecision:
+    """Verdict from EmailRelevanceFilter for a single email.
+
+    Immutable so callers cannot mutate the decision after logging.
+    The ``layer`` field records which filter layer made the call so
+    the audit log can explain why an email was dropped.
+    """
+
+    accept: bool
+    reason: str
+    action: RelevanceAction
+    layer: Literal["sender_allowlist", "content_sanity", "llm_classifier", "passed"]
 
 
 class EmailAttachment(BaseModel):

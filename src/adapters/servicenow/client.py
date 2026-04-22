@@ -25,6 +25,23 @@ PRIORITY_MAP = {
     "LOW": "4",
 }
 
+# VQMS priority -> ServiceNow (impact, urgency) pair. ServiceNow derives
+# Priority from an Impact × Urgency matrix by default. Sending both alongside
+# the explicit priority keeps Priority correct while also populating the
+# impact/urgency columns that dashboards, SLA widgets, and filters rely on.
+# ServiceNow values: 1=High, 2=Medium, 3=Low.
+IMPACT_URGENCY_MAP = {
+    "CRITICAL": ("1", "1"),
+    "HIGH": ("2", "1"),
+    "MEDIUM": ("2", "2"),
+    "LOW": ("3", "2"),
+}
+
+# ServiceNow expects datetimes in "YYYY-MM-DD HH:mm:ss" format on the
+# Table API. We hold IST times in Python; ServiceNow will display them
+# in the user's session timezone.
+SERVICENOW_DATETIME_FORMAT = "%Y-%m-%d %H:%M:%S"
+
 
 class ServiceNowConnectorError(Exception):
     """Raised when a ServiceNow API call fails."""
@@ -50,6 +67,16 @@ class ServiceNowClient:
         self._settings = settings
         self._client: httpx.AsyncClient | None = None
         self._base_url: str = ""
+        # Per-process cache for sys_user_group name lookups. Maps the
+        # queried name to the same name when it exists in ServiceNow, or
+        # to "" when no such group exists. We cache both hits and misses
+        # so we don't re-query ServiceNow on every ticket creation.
+        self._group_name_cache: dict[str, str] = {}
+        # Per-process cache for sys_user display-name lookups. Keys are
+        # `user_name` values (e.g. "admin"), values are the user's `name`
+        # field (e.g. "System Administrator"), or "" when the user cannot
+        # be resolved.
+        self._user_display_name_cache: dict[str, str] = {}
 
     def _resolve_base_url(self) -> str:
         """Work out the ServiceNow base URL from settings.
@@ -137,6 +164,113 @@ class ServiceNowClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+
+    async def resolve_group_name(self, name: str) -> str:
+        """Return `name` if a sys_user_group with that exact name exists.
+
+        ServiceNow reference fields (assignment_group, caller_id, etc.)
+        silently drop unresolvable values — the incident is created with
+        an empty reference, which means it never shows up under any
+        group-scoped view in the UI. We avoid that by pre-checking that
+        the group name resolves before POSTing the ticket.
+
+        Args:
+            name: The group name to check (e.g. "VQMS Support").
+
+        Returns:
+            The input `name` if a matching group exists, else "".
+            Both hits and misses are cached per process.
+        """
+        lookup = (name or "").strip()
+        if not lookup:
+            return ""
+
+        cached = self._group_name_cache.get(lookup)
+        if cached is not None:
+            return cached
+
+        try:
+            client = self._get_client()
+            url = f"{self._base_url}/api/now/table/sys_user_group"
+            response = await client.get(
+                url,
+                params={
+                    "sysparm_query": f"name={lookup}",
+                    "sysparm_fields": "sys_id,name",
+                    "sysparm_limit": 1,
+                },
+            )
+            response.raise_for_status()
+            results = response.json().get("result", []) or []
+            resolved = lookup if results else ""
+        except Exception:  # noqa: BLE001 - lookup failure is non-critical
+            # Don't let a group lookup failure block ticket creation —
+            # treat it as "unresolved" and let the caller decide what
+            # to do. A warning is enough; the ticket will still post.
+            logger.warning(
+                "ServiceNow group lookup failed — treating as unresolved",
+                tool="servicenow",
+                group=lookup,
+            )
+            resolved = ""
+
+        self._group_name_cache[lookup] = resolved
+        return resolved
+
+    async def resolve_user_display_name(self, user_name: str) -> str:
+        """Return the `name` (display value) of a sys_user given `user_name`.
+
+        Needed because we POST tickets with sysparm_input_display_value=true,
+        which means reference fields must be sent as their human-readable
+        display value. For sys_user records the display value is the
+        `name` field (e.g. "System Administrator"), not the `user_name`
+        ("admin"). Sending the wrong one leaves the reference unresolved
+        and the ticket becomes invisible to "Self Service" / "Caller = me"
+        style views in the ServiceNow UI.
+
+        Args:
+            user_name: The sys_user.user_name to look up (e.g. "admin").
+
+        Returns:
+            The user's `name` field when found, else "". Results (hit or
+            miss) are cached per process.
+        """
+        lookup = (user_name or "").strip()
+        if not lookup:
+            return ""
+
+        cached = self._user_display_name_cache.get(lookup)
+        if cached is not None:
+            return cached
+
+        try:
+            client = self._get_client()
+            url = f"{self._base_url}/api/now/table/sys_user"
+            response = await client.get(
+                url,
+                params={
+                    "sysparm_query": f"user_name={lookup}",
+                    "sysparm_fields": "sys_id,user_name,name",
+                    "sysparm_limit": 1,
+                },
+            )
+            response.raise_for_status()
+            results = response.json().get("result", []) or []
+            resolved = ""
+            if results:
+                # Fall back to user_name itself if `name` is blank, which
+                # can happen on lightly-configured PDI users.
+                resolved = (results[0].get("name") or "").strip() or lookup
+        except Exception:  # noqa: BLE001 - lookup failure is non-critical
+            logger.warning(
+                "ServiceNow user lookup failed — caller_id will be blank",
+                tool="servicenow",
+                user_name=lookup,
+            )
+            resolved = ""
+
+        self._user_display_name_cache[lookup] = resolved
+        return resolved
 
     @staticmethod
     def status_to_state(status: str) -> str:

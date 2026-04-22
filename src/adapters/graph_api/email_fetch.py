@@ -17,6 +17,20 @@ from utils.decorators import log_service_call
 
 logger = structlog.get_logger(__name__)
 
+# Server-side filter applied when listing unread messages.
+# Narrows to real unread mail by excluding the most common auto-reply
+# subject prefixes. Graph's $filter doesn't support regex, so we chain
+# a handful of startswith() clauses — they cover 99% of noise subjects.
+UNREAD_FILTER = (
+    "isRead eq false"
+    " and not(startswith(subject,'Automatic reply'))"
+    " and not(startswith(subject,'Auto:'))"
+    " and not(startswith(subject,'Out of office'))"
+    " and not(startswith(subject,'Undeliverable'))"
+    " and not(startswith(subject,'Delivery Status Notification'))"
+    " and not(startswith(subject,'Mail Delivery Failure'))"
+)
+
 
 class EmailFetchMixin:
     """Email fetch methods for the Graph API connector.
@@ -92,7 +106,7 @@ class EmailFetchMixin:
             "GET",
             url,
             params={
-                "$filter": "isRead eq false",
+                "$filter": UNREAD_FILTER,
                 "$top": str(top),
                 "$select": "id,subject,from,receivedDateTime,conversationId",
             },

@@ -156,12 +156,18 @@ class EmailDashboardService:
                     total=total, page=page, page_size=page_size, mail_chains=[]
                 )
 
-            # Step 3: Fetch all emails for these thread keys
+            # Step 3: Fetch all emails for these thread keys.
+            # Select every non-PII column on intake.email_messages so
+            # MailItemResponse can expose the full record.
             tk_placeholders = ", ".join(f"${i + 1}" for i in range(len(thread_keys)))
             emails_sql = (
-                "SELECT em.query_id, em.sender_email, em.sender_name, "
-                "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
-                "em.thread_status, em.message_id, "
+                "SELECT em.query_id, em.message_id, em.correlation_id, "
+                "em.sender_email, em.sender_name, "
+                "em.subject, em.body_text, em.body_html, "
+                "em.received_at, em.parsed_at, em.created_at, "
+                "em.in_reply_to, em.conversation_id, em.thread_status, "
+                "em.vendor_id, em.vendor_match_method, "
+                "em.s3_raw_email_key, em.source, "
                 "ce.status AS case_status, "
                 "rd.priority AS routing_priority "
                 "FROM intake.email_messages em "
@@ -310,12 +316,20 @@ class EmailDashboardService:
             case_status = lookup_row["status"]
             routing_priority = lookup_row["priority"]
 
-            # Fetch all emails in the thread
+            # Fetch all emails in the thread. Same full SELECT as
+            # list_email_chains so MailItemResponse gets every column.
+            mail_item_columns = (
+                "em.query_id, em.message_id, em.correlation_id, "
+                "em.sender_email, em.sender_name, "
+                "em.subject, em.body_text, em.body_html, "
+                "em.received_at, em.parsed_at, em.created_at, "
+                "em.in_reply_to, em.conversation_id, em.thread_status, "
+                "em.vendor_id, em.vendor_match_method, "
+                "em.s3_raw_email_key, em.source"
+            )
             if conversation_id:
                 emails_sql = (
-                    "SELECT em.query_id, em.sender_email, em.sender_name, "
-                    "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
-                    "em.thread_status, em.message_id "
+                    f"SELECT {mail_item_columns} "
                     "FROM intake.email_messages em "
                     "WHERE em.conversation_id = $1 "
                     "ORDER BY em.received_at DESC"
@@ -323,9 +337,7 @@ class EmailDashboardService:
                 email_rows = await self._postgres.fetch(emails_sql, conversation_id)
             else:
                 emails_sql = (
-                    "SELECT em.query_id, em.sender_email, em.sender_name, "
-                    "em.subject, em.body_text, em.body_html, em.received_at, em.conversation_id, "
-                    "em.thread_status, em.message_id "
+                    f"SELECT {mail_item_columns} "
                     "FROM intake.email_messages em "
                     "WHERE em.query_id = $1 "
                     "ORDER BY em.received_at DESC"

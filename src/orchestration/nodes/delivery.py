@@ -4,12 +4,12 @@ Delivery Node — Step 12 in the VQMS pipeline.
 
 The final pipeline node. Creates a ServiceNow incident ticket,
 replaces the "PENDING" placeholder in the email draft with the
-real INC-XXXXXXX ticket number, then sends the email to the
-vendor via Microsoft Graph API.
+real ServiceNow incident number (e.g. INC0010001), then sends
+the email to the vendor via Microsoft Graph API.
 
 Execution order:
-1. Create ServiceNow ticket → get INC-XXXXXXX
-2. Replace "PENDING" with INC-XXXXXXX in subject and body
+1. Create ServiceNow ticket → get real incident number (INC0010001)
+2. Replace "PENDING" with the incident number in subject and body
 3. Send email via Graph API
 4. Update status to RESOLVED (Path A) or AWAITING_RESOLUTION (Path B)
 
@@ -43,8 +43,8 @@ class DeliveryNode:
     """Creates ServiceNow ticket and sends email to vendor (Step 12).
 
     Two-phase delivery:
-    1. ServiceNow ticket creation → real INC-XXXXXXX number
-    2. Graph API email send → PENDING replaced with INC number
+    1. ServiceNow ticket creation → real incident number (e.g. INC0010001)
+    2. Graph API email send → PENDING replaced with the real number
     """
 
     def __init__(

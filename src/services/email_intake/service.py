@@ -19,14 +19,16 @@ import structlog
 
 from config.settings import Settings
 from events.eventbridge import EventBridgeConnector
+from adapters.bedrock import BedrockConnector
 from adapters.graph_api import GraphAPIConnector
 from storage.s3_client import S3Connector
 from adapters.salesforce import SalesforceConnector
 from queues.sqs import SQSConnector
-from models.email import ParsedEmailPayload
+from models.email import ParsedEmailPayload, RelevanceDecision
 from models.query import UnifiedQueryPayload
 from services.email_intake.attachment_processor import AttachmentProcessor
 from services.email_intake.parser import EmailParser
+from services.email_intake.relevance_filter import EmailRelevanceFilter
 from services.email_intake.storage import EmailStorage
 from services.email_intake.thread_correlator import ThreadCorrelator
 from services.email_intake.vendor_identifier import VendorIdentifier
@@ -66,6 +68,7 @@ class EmailIntakeService:
         salesforce: SalesforceConnector,
         settings: Settings,
         closure_service: object | None = None,
+        bedrock: BedrockConnector | None = None,
     ) -> None:
         """Initialize with all required connectors.
 
@@ -80,6 +83,9 @@ class EmailIntakeService:
             closure_service: Optional Phase 6 ClosureService. When present,
                 replies on EXISTING_OPEN / REPLY_TO_CLOSED threads are run
                 through confirmation keyword matching and reopen handling.
+            bedrock: Optional BedrockConnector used by the relevance
+                filter's Layer 4 classifier. Required only when
+                ``email_filter_use_llm_classifier`` is true.
         """
         self._graph_api = graph_api
         self._postgres = postgres
@@ -93,6 +99,7 @@ class EmailIntakeService:
         self._vendor_identifier = VendorIdentifier(salesforce)
         self._thread_correlator = ThreadCorrelator(postgres)
         self._storage = EmailStorage(postgres, s3, settings)
+        self._relevance_filter = EmailRelevanceFilter(settings, bedrock)
 
     @log_service_call
     async def process_email(
@@ -146,6 +153,32 @@ class EmailIntakeService:
         # E2.2 [CRITICAL] Parse email fields
         parsed = EmailParser.parse_email_fields(raw_email)
 
+        # E2.5 [NON-CRITICAL] Vendor identification (moved up so the
+        # relevance filter can reject unknown senders before we spend
+        # cycles on storage, attachments, or Bedrock).
+        vendor_id, vendor_match_method = await self._vendor_identifier.identify_vendor(
+            parsed, correlation_id
+        )
+
+        # E2.1b [CRITICAL] Relevance filter — drop noise (hello-only emails,
+        # auto-replies, newsletters, unknown senders) before we write any
+        # artifacts or enqueue to the AI pipeline.
+        decision = await self._relevance_filter.evaluate(
+            parsed=parsed,
+            raw_email=raw_email,
+            vendor_id=vendor_id,
+            vendor_match_method=vendor_match_method,
+            correlation_id=correlation_id,
+        )
+        if not decision.accept:
+            await self._handle_rejected_email(
+                decision=decision,
+                parsed=parsed,
+                message_id=message_id,
+                correlation_id=correlation_id,
+            )
+            return None
+
         # E2.7 [CRITICAL] Generate IDs
         query_id = IdGenerator.generate_query_id()
         execution_id = IdGenerator.generate_execution_id()
@@ -159,11 +192,6 @@ class EmailIntakeService:
         # E2.4 [NON-CRITICAL] Process attachments
         attachments = await self._attachment_processor.process_attachments(
             raw_email, query_id, correlation_id
-        )
-
-        # E2.5 [NON-CRITICAL] Vendor identification via Salesforce
-        vendor_id, vendor_match_method = await self._vendor_identifier.identify_vendor(
-            parsed, correlation_id
         )
 
         # E2.6 [NON-CRITICAL] Thread correlation
@@ -295,6 +323,59 @@ class EmailIntakeService:
             correlation_id=correlation_id,
         )
         return result
+
+    async def _handle_rejected_email(
+        self,
+        *,
+        decision: RelevanceDecision,
+        parsed: dict,
+        message_id: str,
+        correlation_id: str,
+    ) -> None:
+        """Post-reject side effects — auto-replies, audit hook.
+
+        Always non-critical: a failure here must not surface as an
+        EmailIntakeError because the idempotency key is already written
+        and SQS would just retry forever. We log and swallow.
+        """
+        if decision.action == "auto_reply_ask_details":
+            recipient = parsed.get("sender_email")
+            if recipient:
+                try:
+                    await self._graph_api.send_email(
+                        to=recipient,
+                        subject="Could you share a bit more detail?",
+                        body_html=(
+                            "<p>Hi,</p>"
+                            "<p>Thanks for writing in. We couldn't identify a "
+                            "specific question in your message. Could you reply "
+                            "with a short description of what you need — for "
+                            "example, the invoice/PO number, the amount, and "
+                            "what's wrong?</p>"
+                            "<p>— Vendor Support</p>"
+                        ),
+                        correlation_id=correlation_id,
+                    )
+                except Exception:
+                    logger.warning(
+                        "Auto-reply send failed — continuing",
+                        tool="email_intake",
+                        message_id=message_id,
+                        correlation_id=correlation_id,
+                    )
+
+        # thread_only is handled in a later iteration — for now we
+        # log and let the vendor's reply sit. Existing reconciliation
+        # polling can still surface the parent thread's state.
+        logger.info(
+            "Email rejected — no SQS enqueue",
+            tool="email_intake",
+            layer=decision.layer,
+            reason=decision.reason,
+            action=decision.action,
+            message_id=message_id,
+            correlation_id=correlation_id,
+        )
 
     async def _run_closure_detection(
         self,

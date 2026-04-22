@@ -172,6 +172,12 @@ async def authenticate_user(
 
     role = role_row["role"]
     tenant = role_row["tenant"] or user_row["tenant"]
+    # Compose full_name from role row. Either part may be NULL in the
+    # DB for legacy rows, so strip whitespace to avoid leading/trailing
+    # spaces. If both parts are empty, fall back to None (Pydantic default).
+    first_name = (role_row["first_name"] or "").strip()
+    last_name = (role_row["last_name"] or "").strip()
+    full_name = f"{first_name} {last_name}".strip() or None
     token = create_access_token(
         user_name=user_row["user_name"],
         role=role,
@@ -189,6 +195,7 @@ async def authenticate_user(
     return LoginResponse(
         token=token,
         user_name=user_row["user_name"],
+        full_name=full_name,
         email=user_row["email_id"],
         role=role,
         tenant=tenant,

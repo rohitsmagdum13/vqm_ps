@@ -46,21 +46,57 @@ class MailItemResponse(BaseModel):
     """A single email in a thread.
 
     Represents one row from intake.email_messages joined with
-    its attachments from intake.email_attachments.
+    its attachments from intake.email_attachments. Every non-PII
+    column on intake.email_messages is exposed here so the dashboard
+    can render the full audit trail for a vendor email.
     """
 
     model_config = ConfigDict(frozen=True)
 
+    # Identifiers
     query_id: str = Field(description="VQMS query ID (e.g., VQ-2026-0001)")
+    message_id: str = Field(description="Exchange Online message ID (unique per email)")
+    correlation_id: str = Field(description="UUID v4 tracing ID propagated through the pipeline")
+
+    # Sender + subject + body
     sender: UserResponse = Field(description="Email sender")
     subject: str = Field(description="Email subject line")
     body: str = Field(description="Plain text email body")
     body_html: str | None = Field(default=None, description="Sanitized HTML email body, if available")
-    timestamp: str = Field(description="Received time in ISO 8601 IST format")
+
+    # Timestamps (ISO 8601 IST strings)
+    timestamp: str = Field(description="Received time in ISO 8601 IST format (received_at)")
+    parsed_at: str = Field(description="When the email was parsed (ISO 8601 IST)")
+    created_at: str = Field(description="When the email_messages row was inserted (ISO 8601 IST)")
+
+    # Thread correlation
+    in_reply_to: str | None = Field(
+        default=None, description="Message-ID this email is a reply to"
+    )
+    conversation_id: str | None = Field(
+        default=None, description="Exchange conversationId for thread grouping"
+    )
+    thread_status: str = Field(description="Thread status: NEW, EXISTING_OPEN, REPLY_TO_CLOSED")
+
+    # Vendor resolution
+    vendor_id: str | None = Field(
+        default=None, description="Resolved vendor ID from Salesforce (NULL if unresolved)"
+    )
+    vendor_match_method: str | None = Field(
+        default=None,
+        description="How the vendor was identified: exact_email, body_extraction, fuzzy_name, unresolved",
+    )
+
+    # Storage + source
+    s3_raw_email_key: str | None = Field(
+        default=None, description="S3 key for the raw .eml file"
+    )
+    source: str = Field(default="email", description="Entry point — always 'email' for this model")
+
+    # Attachments
     attachments: list[AttachmentSummary] = Field(
         default_factory=list, description="Attachments on this email"
     )
-    thread_status: str = Field(description="Thread status: NEW, EXISTING_OPEN, REPLY_TO_CLOSED")
 
 
 class MailChainResponse(BaseModel):

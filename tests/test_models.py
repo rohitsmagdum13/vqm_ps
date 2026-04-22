@@ -401,7 +401,9 @@ class TestTicketModels:
         assert ticket.ticket_id == "INC-0001234"
 
     def test_invalid_ticket_id_format(self):
-        with pytest.raises(ValidationError, match="INC-XXXXXXX"):
+        # Validator message now references the real ServiceNow form
+        # (INC0010001) rather than the old hyphenated placeholder.
+        with pytest.raises(ValidationError, match="INC.*7\\+ digits"):
             TicketInfo(
                 ticket_id="TICKET-001",
                 query_id="VQ-2026-0001",

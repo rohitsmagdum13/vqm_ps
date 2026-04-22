@@ -13,10 +13,16 @@ vendor tier, urgency, and confidence.
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# ServiceNow returns incident numbers like "INC0010001" (no hyphen,
+# 7+ digits). Earlier VQMS fixtures used "INC-XXXXXXX" (hyphenated)
+# so the validator accepts both forms for backward compatibility.
+_TICKET_ID_PATTERN = re.compile(r"^INC-?\d{7,}$")
 
 
 class TicketCreateRequest(BaseModel):
@@ -42,13 +48,17 @@ class TicketCreateRequest(BaseModel):
 class TicketInfo(BaseModel):
     """ServiceNow ticket information returned after creation.
 
-    The ticket_id (INC-XXXXXXX format) is included in all
-    outbound emails to the vendor.
+    The ticket_id is the ServiceNow incident number — either the
+    real ServiceNow form (INC0010001, no hyphen, 7+ digits) or the
+    legacy hyphenated form used by older fixtures (INC-0010001).
+    Both are included in outbound emails to the vendor as-is.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    ticket_id: str = Field(description="ServiceNow incident number (INC-XXXXXXX)")
+    ticket_id: str = Field(
+        description="ServiceNow incident number (e.g. INC0010001 or INC-0010001)",
+    )
     query_id: str = Field(description="VQMS query ID this ticket belongs to")
     status: str = Field(description="Ticket status (New, In Progress, Resolved, Closed)")
     created_at: datetime = Field(description="When the ticket was created (IST)")
@@ -58,9 +68,18 @@ class TicketInfo(BaseModel):
     @field_validator("ticket_id")
     @classmethod
     def validate_ticket_id_format(cls, v: str) -> str:
-        """Ticket ID must match the INC-XXXXXXX format."""
-        if not v.startswith("INC-") or len(v) != 11:
-            msg = "Ticket ID must match format INC-XXXXXXX (11 characters total)"
+        """Ticket ID must be INC followed by 7+ digits, optional hyphen.
+
+        ServiceNow-native form: "INC0010001" (no hyphen, 10 chars total).
+        Legacy VQMS test-fixture form: "INC-0010001" (hyphen, 11 chars).
+        Both accepted — the hyphen is tolerated so older tests still pass
+        while real ServiceNow responses also validate.
+        """
+        if not _TICKET_ID_PATTERN.match(v):
+            msg = (
+                "Ticket ID must be 'INC' followed by 7+ digits "
+                "(e.g. 'INC0010001'); a hyphen after INC is tolerated"
+            )
             raise ValueError(msg)
         return v
 

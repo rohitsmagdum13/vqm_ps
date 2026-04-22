@@ -160,13 +160,35 @@ class TestNonCriticalStepFailures:
         assert result is not None
         assert result.s3_raw_email_key is None  # S3 failed, but we continued
 
-    async def test_vendor_not_found_continues(
-        self, email_service, mock_salesforce
+    async def test_vendor_not_found_but_domain_allowlisted_continues(
+        self,
+        mock_graph_api,
+        mock_postgres,
+        mock_s3_connector,
+        mock_sqs_connector,
+        mock_eventbridge_connector,
+        mock_salesforce,
+        mock_settings,
     ) -> None:
-        """Vendor identification returning None doesn't block processing."""
-        mock_salesforce.identify_vendor.return_value = None
+        """Unresolved vendor from an allowlisted domain still proceeds.
 
-        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+        Confirms that when Salesforce can't match the sender but the domain
+        is explicitly allowlisted, the pipeline doesn't abort — it continues
+        downstream with vendor_id=None and vendor_match_method='unresolved'.
+        """
+        mock_salesforce.identify_vendor.return_value = None
+        mock_settings.email_filter_allowed_sender_domains = ["technova.com"]
+
+        service = EmailIntakeService(
+            graph_api=mock_graph_api,
+            postgres=mock_postgres,
+            s3=mock_s3_connector,
+            sqs=mock_sqs_connector,
+            eventbridge=mock_eventbridge_connector,
+            salesforce=mock_salesforce,
+            settings=mock_settings,
+        )
+        result = await service.process_email("AAMkAGI2TG93AAA=")
 
         assert result is not None
         assert result.vendor_id is None
@@ -284,6 +306,118 @@ class TestAttachmentManifest:
         assert result is not None
         # Only 1 upload call: raw email (no attachment, no manifest)
         assert mock_s3_connector.upload_file.call_count == 1
+
+
+class TestRelevanceFilter:
+    """Tests for the pre-pipeline relevance filter.
+
+    Verifies that "hello"-only emails, auto-replies, unknown senders,
+    and other noise are rejected before reaching SQS / Bedrock.
+    """
+
+    async def test_hello_only_email_rejected(
+        self, email_service, mock_graph_api, mock_sqs_connector
+    ) -> None:
+        """A known vendor sending just 'hello' is rejected (too short)."""
+        email_response = mock_graph_api.fetch_email.return_value.copy()
+        email_response["subject"] = "hi"
+        email_response["body"] = {"contentType": "text", "content": "hello"}
+        email_response["bodyPreview"] = "hello"
+        mock_graph_api.fetch_email.return_value = email_response
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is None
+        mock_sqs_connector.send_message.assert_not_called()
+
+    async def test_unknown_sender_rejected_with_auto_reply(
+        self, email_service, mock_salesforce, mock_graph_api, mock_sqs_connector
+    ) -> None:
+        """Unresolved vendor + non-allowlisted domain rejects and auto-replies."""
+        mock_salesforce.identify_vendor.return_value = None
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is None
+        mock_sqs_connector.send_message.assert_not_called()
+        # Auto-reply asking for details is sent to the sender
+        mock_graph_api.send_email.assert_called_once()
+
+    async def test_allowlisted_domain_bypasses_sender_check(
+        self, mock_graph_api, mock_postgres, mock_s3_connector,
+        mock_sqs_connector, mock_eventbridge_connector, mock_salesforce,
+        mock_settings,
+    ) -> None:
+        """Unresolved vendor from an allowlisted domain still goes through."""
+        mock_settings.email_filter_allowed_sender_domains = ["technova.com"]
+        mock_salesforce.identify_vendor.return_value = None
+        service = EmailIntakeService(
+            graph_api=mock_graph_api,
+            postgres=mock_postgres,
+            s3=mock_s3_connector,
+            sqs=mock_sqs_connector,
+            eventbridge=mock_eventbridge_connector,
+            salesforce=mock_salesforce,
+            settings=mock_settings,
+        )
+
+        result = await service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is not None
+        mock_sqs_connector.send_message.assert_called_once()
+
+    async def test_auto_submitted_header_rejected(
+        self, email_service, mock_graph_api, mock_sqs_connector
+    ) -> None:
+        """Email with Auto-Submitted header is dropped silently."""
+        email_response = mock_graph_api.fetch_email.return_value.copy()
+        email_response["internetMessageHeaders"] = [
+            {"name": "Auto-Submitted", "value": "auto-replied"},
+        ]
+        mock_graph_api.fetch_email.return_value = email_response
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is None
+        mock_sqs_connector.send_message.assert_not_called()
+        mock_graph_api.send_email.assert_not_called()  # silent drop
+
+    async def test_out_of_office_subject_rejected(
+        self, email_service, mock_graph_api, mock_sqs_connector
+    ) -> None:
+        """'Out of office' subject prefix is rejected even without headers."""
+        email_response = mock_graph_api.fetch_email.return_value.copy()
+        email_response["subject"] = "Out of office: back Monday"
+        mock_graph_api.fetch_email.return_value = email_response
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is None
+        mock_sqs_connector.send_message.assert_not_called()
+
+    async def test_newsletter_with_list_unsubscribe_rejected(
+        self, email_service, mock_graph_api, mock_sqs_connector
+    ) -> None:
+        """List-Unsubscribe header marks the message as bulk mail — dropped."""
+        email_response = mock_graph_api.fetch_email.return_value.copy()
+        email_response["internetMessageHeaders"] = [
+            {"name": "List-Unsubscribe", "value": "<mailto:unsub@example.com>"},
+        ]
+        mock_graph_api.fetch_email.return_value = email_response
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is None
+        mock_sqs_connector.send_message.assert_not_called()
+
+    async def test_valid_query_passes_filter(
+        self, email_service, mock_sqs_connector
+    ) -> None:
+        """A real invoice query (default conftest email) passes through."""
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        assert result is not None
+        mock_sqs_connector.send_message.assert_called_once()
 
 
 class TestThreadCorrelation:

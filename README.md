@@ -27,8 +27,10 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 
 **Email Intake (vendor sends email to vendor-support@company.com):**
 - Microsoft Graph API webhook + reconciliation polling (every 5 min)
+- Graph-side `$filter` drops auto-reply / out-of-office / NDR subjects before they reach us
 - MIME parsing, attachment extraction (PDF/Excel/Word/CSV)
 - Salesforce vendor identification (3-step fallback: exact email, body extraction, fuzzy name)
+- **Relevance filter (4 layers)** — rejects hello-only messages, unknown senders, newsletters, and auto-submitted mail BEFORE any Bedrock cost. Optional Haiku classifier for borderline cases (off by default). See `src/services/email_intake/relevance_filter.py`.
 - Thread correlation (In-Reply-To, References, conversationId)
 - Raw email storage in S3, metadata in PostgreSQL
 - GET /emails — paginated email chains with filtering and search
@@ -146,6 +148,12 @@ SALESFORCE_USERNAME=<sf-user>
 GRAPH_API_TENANT_ID=<azure-tenant-id>
 GRAPH_API_CLIENT_ID=<azure-client-id>
 GRAPH_API_MAILBOX=vendorsupport@yourcompany.com
+
+# Email Relevance Filter (drops noise before Bedrock)
+EMAIL_FILTER_MIN_CHARS=30
+EMAIL_FILTER_NOISE_PATTERNS=["hi","hello","hey","thanks","thank you","ok","okay","noted","received","got it","test"]
+EMAIL_FILTER_USE_LLM_CLASSIFIER=false     # Flip to true to enable Haiku classifier on borderline emails
+EMAIL_FILTER_ALLOWED_SENDER_DOMAINS=[]    # Sender domains allowed even when Salesforce can't resolve them
 ```
 
 ### Run the Backend

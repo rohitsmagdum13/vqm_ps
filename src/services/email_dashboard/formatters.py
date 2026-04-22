@@ -28,9 +28,15 @@ class DashboardFormatter:
     def row_to_mail_item(
         row: dict, attachments: list[AttachmentSummary]
     ) -> MailItemResponse:
-        """Convert a database row to a MailItemResponse."""
+        """Convert a database row to a MailItemResponse.
+
+        Expects the row to include every non-PII column from
+        intake.email_messages. See service.py SELECT lists.
+        """
         return MailItemResponse(
             query_id=row["query_id"],
+            message_id=row["message_id"],
+            correlation_id=row["correlation_id"],
             sender=UserResponse(
                 name=row["sender_name"] or row["sender_email"],
                 email=row["sender_email"],
@@ -39,8 +45,16 @@ class DashboardFormatter:
             body=row["body_text"] or "",
             body_html=row.get("body_html"),
             timestamp=DashboardMapper.format_timestamp(row["received_at"]),
-            attachments=attachments,
+            parsed_at=DashboardMapper.format_timestamp(row.get("parsed_at")),
+            created_at=DashboardMapper.format_timestamp(row.get("created_at")),
+            in_reply_to=row.get("in_reply_to"),
+            conversation_id=row.get("conversation_id"),
             thread_status=row["thread_status"] or "NEW",
+            vendor_id=row.get("vendor_id"),
+            vendor_match_method=row.get("vendor_match_method"),
+            s3_raw_email_key=row.get("s3_raw_email_key"),
+            source=row.get("source") or "email",
+            attachments=attachments,
         )
 
     @staticmethod

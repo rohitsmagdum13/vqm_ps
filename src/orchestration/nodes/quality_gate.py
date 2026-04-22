@@ -210,12 +210,15 @@ class QualityGateNode:
         """Check 1: Ticket number placeholder or real INC number present.
 
         The draft uses "PENDING" as placeholder. Delivery node will
-        replace with real INC-XXXXXXX. Either form passes.
+        replace with the real ServiceNow incident number. ServiceNow
+        returns the number without a hyphen (INC0010001); older VQMS
+        fixtures used a hyphenated form (INC-0010001). Both pass.
         """
         if "PENDING" in body:
             return True
-        # Also accept real INC numbers (post-delivery re-check)
-        if re.search(r"INC-\d{7}", body):
+        # Accept both real ServiceNow (INC0010001) and legacy hyphenated
+        # (INC-0010001) forms on the post-delivery re-check.
+        if re.search(r"INC-?\d{7,}", body):
             return True
         return False
 

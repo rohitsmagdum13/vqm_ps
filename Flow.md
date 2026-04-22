@@ -33,18 +33,36 @@ File: `src/intake/email_intake.py` -> `EmailIntakeService.process_email(message_
 | Step | Code | Critical? | What it does |
 |------|------|-----------|-------------|
 | E2.1 | `self._postgres.check_idempotency(message_id, "email", ...)` | YES | INSERT ON CONFLICT — returns False if duplicate, pipeline stops |
-| E1 | `self._graph_api.fetch_email(message_id)` | YES | GET /users/{mailbox}/messages/{id}?$expand=attachments |
-| E2.2 | `self._parse_email_fields(raw_email)` | YES | Extract sender, recipients, subject, body, headers, conversationId |
+| E1 | `self._graph_api.fetch_email(message_id)` | YES | GET /users/{mailbox}/messages/{id}?$expand=attachments (Graph $filter also excludes Automatic reply / Out of office / Undeliverable / Delivery Status Notification / Mail Delivery Failure subjects — see `adapters/graph_api/email_fetch.py:UNREAD_FILTER`) |
+| E2.2 | `EmailParser.parse_email_fields(raw_email)` | YES | Extract sender, recipients, subject, body, headers, conversationId |
+| E2.2a | `self._vendor_identifier.identify(parsed)` | no | Salesforce 3-step fallback: exact email → body extraction → fuzzy name. **Moved ahead of the filter so the sender allowlist can use the result.** |
+| E2.2b | `self._relevance_filter.evaluate(parsed, raw_email, vendor_id, ...)` | YES | 4-layer drop of obvious noise BEFORE any storage or SQS work — sender allowlist → content sanity (length + noise words + Auto-Submitted / List-Unsubscribe / Precedence headers) → optional Haiku classifier. If `accept=False`, pipeline stops early — see "Email Relevance Filter" below. |
 | E2.7 | `IdGenerator.generate_query_id()` / `generate_execution_id()` | YES | Generate VQ-2026-XXXX and UUID v4 |
 | E2.3 | `self._store_raw_email(raw_email, query_id)` | no | Upload raw JSON to S3 `inbound-emails/{query_id}/raw_email.json` (single bucket: vqms-data-store) |
 | E2.4 | `self._process_attachments(raw_email, query_id)` | no | Validate → store to S3 `attachments/{query_id}/{att_id}_{filename}` → extract text → store `_manifest.json` |
-| E2.5 | `self._identify_vendor(parsed)` | no | Salesforce 3-step fallback: exact email → body extraction → fuzzy name |
 | E2.6 | `self._determine_thread_status(raw_email)` | no | Check conversationId in workflow.case_execution → NEW / EXISTING_OPEN / REPLY_TO_CLOSED |
 | E2.8 | `self._store_email_metadata(...)` + `self._create_case_execution(...)` | YES | INSERT into intake.email_messages + workflow.case_execution |
 | E2.9a | `self._eventbridge.publish_event("EmailParsed", ...)` | no | Publish audit event |
 | E2.9b | `self._sqs.send_message(queue_url, payload)` | YES | Enqueue UnifiedQueryPayload to vqms-email-intake-queue |
 
 **Critical steps** propagate errors (SQS retries). **Non-critical steps** log warnings and continue with safe defaults (None, empty list, "NEW").
+
+### Email Relevance Filter (Step E2.2b)
+
+File: `src/services/email_intake/relevance_filter.py` → `EmailRelevanceFilter.evaluate()`
+
+Purpose: drop obvious noise (hello-only messages, out-of-office auto-replies, unknown senders, newsletters) BEFORE the email ever reaches the expensive Bedrock pipeline. A 4-layer chain, cheapest first.
+
+| Layer | Check | Action on fail |
+|-------|-------|----------------|
+| 0 (Graph) | `$filter` at `list_unread_messages` excludes auto-reply subjects server-side | Email never fetched |
+| 1 (sender_allowlist) | If vendor is `UNRESOLVED` AND sender domain not in `email_filter_allowed_sender_domains` | `auto_reply_ask_details` — send polite "please register" note once, mark read |
+| 2 (content_sanity) | Combined subject+body (quoted-reply stripped) < `email_filter_min_chars` chars, OR matches noise pattern alone, OR headers include `Auto-Submitted`, `X-Auto-Response-Suppress`, `List-Unsubscribe`, or `Precedence: bulk/list/junk`, OR subject starts with auto-reply prefix | `drop` silently, or `thread_only` for empty `RE:` replies |
+| 3 (llm_classifier) | Only when `email_filter_use_llm_classifier=true` AND content length is borderline (30–200 chars). One Haiku call with temperature 0 returns `{is_query, reason}`. Fails OPEN on any error. | `auto_reply_ask_details` |
+
+Returns `RelevanceDecision(accept, reason, action, layer)` from `src/models/email.py`.
+
+When `accept=False`, `EmailIntakeService._handle_rejected_email()` logs the rejection with `tool="email_intake"` and, for `auto_reply_ask_details`, sends a one-line reply asking for more detail via `graph_api.send_email`. No SQS enqueue. No downstream cost.
 
 ### Attachment Processing
 
@@ -159,7 +177,7 @@ All external system interactions go through connectors in `src/connectors/`. Eve
 | EventBridgeConnector | `src/connectors/eventbridge.py` | publish_event with 20 valid event types, detail enrichment with correlation_id |
 | GraphAPIConnector | `src/connectors/graph_api.py` | MSAL OAuth2, fetch_email, send_email, list_unread_messages, webhook subscription (httpx + tenacity retry) |
 | SalesforceConnector | `src/adapters/salesforce.py` | 3-step vendor identification, find_vendor_by_email, fuzzy_name_match (simple-salesforce + asyncio.to_thread) |
-| ServiceNowConnector | `src/adapters/servicenow.py` | httpx.AsyncClient, create_ticket, update_ticket_status, get_ticket, get_work_notes. Lazy client init. Priority mapping CRITICAL→1..LOW→4. |
+| ServiceNowConnector | `src/adapters/servicenow/` (folder module: client + ticket_create + ticket_query mixins) | httpx.AsyncClient with lazy init, basic auth. `create_ticket` posts with `sysparm_input_display_value=true` and includes state/priority/impact/urgency/caller_id/due_date/work_notes + u_* custom fields. `resolve_user_display_name` (admin → "System Administrator") puts tickets in the Self Service view. `resolve_group_name` + `status_to_state`/`state_to_status` helpers. See **ServiceNow Connector** section below for the full payload spec. |
 | BedrockConnector | `src/adapters/bedrock.py` | LLM inference (Claude Sonnet 3.5 via Messages API) + embeddings (Titan Embed v2, 1536 dims). Retry with tenacity on ThrottlingException/ServiceUnavailableException. Cost tracking per call. |
 | OpenAIConnector | `src/adapters/openai_llm.py` | OpenAI Chat Completions (GPT-4o) + Embeddings (text-embedding-3-small). Retry with tenacity on RateLimitError/APIConnectionError/APITimeoutError. Cost tracking per call. Used as fallback behind LLM Gateway. |
 | LLMGateway | `src/adapters/llm_gateway.py` | Unified LLM gateway. Routes `llm_complete()` and `llm_embed()` to Bedrock (primary) or OpenAI (fallback) based on `llm_provider` setting. Four modes: bedrock_only, openai_only, bedrock_with_openai_fallback, openai_with_bedrock_fallback. Pipeline nodes call the gateway, not individual connectors. |
@@ -360,19 +378,56 @@ Edge cases:
 
 ### ServiceNow Connector
 
-File: `src/adapters/servicenow.py` -> `ServiceNowConnector`
+Folder module: `src/adapters/servicenow/` -> `ServiceNowConnector` (mixin composition).
 
-httpx.AsyncClient with basic auth. Lazy client initialization via `_get_client()`.
+| File | Responsibility |
+|------|----------------|
+| `client.py` | `ServiceNowClient` base — lazy httpx.AsyncClient with basic auth, URL builder (accepts `SERVICENOW_INSTANCE_URL` full URL or `SERVICENOW_INSTANCE_NAME` short name), per-process caches for `sys_user_group` and `sys_user` lookups, `resolve_group_name(name)`, `resolve_user_display_name(user_name)`, `status_to_state` / `state_to_status` mappings |
+| `ticket_create.py` | `TicketCreateMixin.create_ticket(request)` — builds and POSTs the incident payload |
+| `ticket_query.py` | `TicketQueryMixin` — `get_ticket`, `get_work_notes`, `update_ticket_status` |
 
 | Method | What it does |
 |--------|-------------|
-| `create_ticket(request)` | POST /api/now/table/incident → returns TicketInfo with INC number |
+| `create_ticket(request)` | POST /api/now/table/incident with `sysparm_input_display_value=true` → returns TicketInfo with INC number |
 | `update_ticket_status(ticket_id, new_status)` | Find sys_id by number, PATCH /api/now/table/incident/{sys_id} |
 | `get_ticket(ticket_id)` | Find sys_id by number, GET /api/now/table/incident/{sys_id} |
 | `get_work_notes(ticket_id)` | GET /api/now/table/sys_journal_field?element=work_notes&element_id={sys_id} |
+| `resolve_user_display_name(user_name)` | GET /api/now/table/sys_user?user_name=... → returns `name` field (e.g. "admin" → "System Administrator"). Cached per process. |
+| `resolve_group_name(name)` | GET /api/now/table/sys_user_group?name=... → returns `name` if the group exists, else "". Cached per process. |
 | `close()` | Close httpx client |
 
-Priority mapping: CRITICAL→1, HIGH→2, MEDIUM→3, LOW→4.
+**Priority mapping** (VQMS → ServiceNow numeric): CRITICAL→1, HIGH→2, MEDIUM→3, LOW→4. ServiceNow also derives Priority from an Impact × Urgency matrix, so the payload includes both:
+
+| VQMS priority | ServiceNow priority | impact | urgency |
+|---------------|--------------------|--------|---------|
+| CRITICAL | 1 | 1 (High) | 1 (High) |
+| HIGH | 2 | 2 (Medium) | 1 (High) |
+| MEDIUM | 3 | 2 (Medium) | 2 (Medium) |
+| LOW | 4 | 3 (Low) | 2 (Medium) |
+
+**Incident payload built by `create_ticket` (UI-visibility tuned):**
+
+| Field | Source / rule |
+|-------|---------------|
+| `short_description` | `request.subject` |
+| `description` | `request.description` |
+| `category` | `request.category` (falls back to ServiceNow default "Inquiry" if not in the choice list) |
+| `priority` | `PRIORITY_MAP[request.priority]` |
+| `impact`, `urgency` | `IMPACT_URGENCY_MAP[request.priority]` — populates the widgets & SLA filters that read these columns |
+| `state` | `"1"` (New) — every VQMS-created ticket starts here |
+| `assignment_group` | Raw pass-through of `request.assigned_team`. No fallback — if the VQMS routing group doesn't exist in `sys_user_group`, the reference stays unresolved but the ticket still appears under **Incident → All** |
+| `caller_id` | `resolve_user_display_name(settings.servicenow_username)` — resolves "admin" → "System Administrator" so the ticket shows up under the default **Self Service** view (`Caller = <logged-in user>`) |
+| `contact_type` | `"email"` |
+| `due_date` | `sla_deadline.strftime("%Y-%m-%d %H:%M:%S")` — lets ServiceNow's built-in "Overdue" filter work without configuring a ServiceNow SLA definition |
+| `work_notes` | One-line VQMS provenance breadcrumb — `"Created by VQMS\n- query_id: ... \n- correlation_id: ... \n- vendor: ... \n- priority: ... (SLA Xh, deadline ...)\n- routed team: ..."` — visible on the Activity log, invisible to the caller |
+| `u_query_id` | `request.query_id` (VQ-YYYY-NNNN) |
+| `u_correlation_id` | `request.correlation_id` — cross-references back to VQMS logs |
+| `u_vendor_id`, `u_vendor_name` | From VQMS routing |
+| `u_sla_hours`, `u_sla_deadline` | SLA target hours + IST deadline timestamp |
+
+`sysparm_input_display_value=true` on the POST means reference fields (`assignment_group`, `caller_id`, `category`) are resolved by their human-readable display name — we don't have to pre-lookup sys_ids for every routing choice VQMS might make.
+
+The `u_*` custom fields are silently dropped by ServiceNow PDIs that don't have those columns on the incident dictionary yet. They appear in the payload so they're ready once the dictionary entries are created via `sys_dictionary` / Studio.
 
 ### Dependency Injection
 
