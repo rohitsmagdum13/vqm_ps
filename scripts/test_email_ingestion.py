@@ -128,46 +128,83 @@ async def run_test(
         # -- Step 1: Get message_id (from arg or list unread) ------
         print_header("FINDING EMAIL TO PROCESS")
 
+        result = None
+        elapsed_ms = 0.0
+        skipped_message_ids: list[str] = []
+
         if message_id:
+            # Explicit --message-id — run exactly once, no iteration.
             print(f"  Using provided message_id: {message_id[:50]}...")
+            print_header("RUNNING 10-STEP EMAIL INGESTION PIPELINE")
+            start_time = time.time()
+            result = await email_intake.process_email(
+                message_id, correlation_id=None,
+            )
+            elapsed_ms = (time.time() - start_time) * 1000
         else:
-            print("  No message_id provided. Listing unread emails...")
-            messages = await graph_api.list_unread_messages(top=5)
+            # No message_id — walk newest-first through the Inbox and
+            # process the first email that isn't already in the
+            # idempotency table. Each iteration calls the full 10-step
+            # pipeline; process_email() returns None for duplicates,
+            # ParsedEmailPayload for fresh emails.
+            print("  No message_id provided. Listing unread emails (newest first)...")
+            messages = await graph_api.list_unread_messages(top=50)
 
             if not messages:
                 print("  [FAIL] No unread emails found in the mailbox!")
                 print("  Send a test email to the mailbox and try again.")
                 return
 
-            # Pick the first unread email
-            first_msg = messages[0]
-            message_id = first_msg["id"]
-            sender = first_msg.get("from", {}).get("emailAddress", {})
-            print(f"  Found {len(messages)} unread email(s). Using the first one:")
-            print(f"    From:    {sender.get('name', 'N/A')} <{sender.get('address', 'N/A')}>")
-            print(f"    Subject: {first_msg.get('subject', '(no subject)')}")
-            print(f"    ID:      {message_id[:50]}...")
+            print(f"  Found {len(messages)} unread email(s). "
+                  "Walking newest-first until a fresh one is found.\n")
 
-        # -- Step 2: Run the full 10-step pipeline -----------------
-        print_header("RUNNING 10-STEP EMAIL INGESTION PIPELINE")
+            print_header("RUNNING 10-STEP EMAIL INGESTION PIPELINE")
 
-        start_time = time.time()
-        result = await email_intake.process_email(
-            message_id,
-            correlation_id=None,  # Let it generate one
-        )
-        elapsed_ms = (time.time() - start_time) * 1000
+            for idx, msg in enumerate(messages, start=1):
+                candidate_id = msg["id"]
+                sender = msg.get("from", {}).get("emailAddress", {})
+                subject = msg.get("subject", "(no subject)")
+                print(f"  [{idx}/{len(messages)}] Trying: {subject[:70]}")
+                print(f"         From: {sender.get('name','N/A')} <{sender.get('address','N/A')}>")
+
+                start_time = time.time()
+                candidate_result = await email_intake.process_email(
+                    candidate_id, correlation_id=None,
+                )
+                elapsed_ms = (time.time() - start_time) * 1000
+
+                if candidate_result is None:
+                    # Already processed — skip and try the next recent one.
+                    print(f"         [SKIP] Already processed ({elapsed_ms:.0f}ms) — "
+                          "trying next recent email\n")
+                    skipped_message_ids.append(candidate_id)
+                    continue
+
+                # Fresh email processed — stop here.
+                message_id = candidate_id
+                result = candidate_result
+                print(f"         [NEW]  Processed in {elapsed_ms:.0f}ms\n")
+                break
+
+            if result is None:
+                print_header("RESULT: ALL UNREAD EMAILS ALREADY PROCESSED")
+                print(f"  Tried {len(skipped_message_ids)} email(s) — every one was a "
+                      "duplicate in cache.idempotency_keys.")
+                print("\n  Options to get a fresh run:")
+                print("  1. Send a new email to the mailbox, then re-run this script.")
+                print("  2. Clear the idempotency table:")
+                print("       DELETE FROM cache.idempotency_keys WHERE source='email';")
+                print("  3. Target a specific message_id explicitly:")
+                print("       uv run python scripts/test_email_ingestion.py --message-id <id>")
+                return
 
         # -- Step 3: Display results -------------------------------
         if result is None:
+            # Only reachable when --message-id points to an already-processed email.
             print_header("RESULT: DUPLICATE EMAIL")
             print("  The email was already processed (idempotency check returned False).")
-            print("  This is expected if you run the script twice with the same message_id.")
-            print("\n  To test with a fresh email:")
-            print("  1. Send a new email to the mailbox")
-            print("  2. Run: uv run python scripts/list_unread_emails.py")
-            print("  3. Copy the new message_id")
-            print("  4. Run: uv run python scripts/test_email_ingestion.py --message-id <id>")
+            print("  Pass a different --message-id, or clear its row from "
+                  "cache.idempotency_keys to re-run.")
         else:
             print_header("RESULT: EMAIL PROCESSED SUCCESSFULLY")
 
