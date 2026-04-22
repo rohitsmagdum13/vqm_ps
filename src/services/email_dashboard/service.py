@@ -162,8 +162,11 @@ class EmailDashboardService:
             tk_placeholders = ", ".join(f"${i + 1}" for i in range(len(thread_keys)))
             emails_sql = (
                 "SELECT em.query_id, em.message_id, em.correlation_id, "
+                "em.internet_message_id, "
                 "em.sender_email, em.sender_name, "
+                "em.to_recipients, em.cc_recipients, em.bcc_recipients, em.reply_to, "
                 "em.subject, em.body_text, em.body_html, "
+                "em.importance, em.has_attachments, em.web_link, "
                 "em.received_at, em.parsed_at, em.created_at, "
                 "em.in_reply_to, em.conversation_id, em.thread_status, "
                 "em.vendor_id, em.vendor_match_method, "
@@ -320,8 +323,11 @@ class EmailDashboardService:
             # list_email_chains so MailItemResponse gets every column.
             mail_item_columns = (
                 "em.query_id, em.message_id, em.correlation_id, "
+                "em.internet_message_id, "
                 "em.sender_email, em.sender_name, "
+                "em.to_recipients, em.cc_recipients, em.bcc_recipients, em.reply_to, "
                 "em.subject, em.body_text, em.body_html, "
+                "em.importance, em.has_attachments, em.web_link, "
                 "em.received_at, em.parsed_at, em.created_at, "
                 "em.in_reply_to, em.conversation_id, em.thread_status, "
                 "em.vendor_id, em.vendor_match_method, "

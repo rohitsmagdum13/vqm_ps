@@ -9,6 +9,7 @@ case execution record.
 
 from __future__ import annotations
 
+import orjson
 import structlog
 
 from config.s3_paths import (
@@ -21,6 +22,17 @@ from models.email import EmailAttachment
 from storage.s3_client import S3Connector
 
 logger = structlog.get_logger(__name__)
+
+
+def _jsonb(value: object) -> str:
+    """Serialize a value to a JSON string for asyncpg JSONB binding.
+
+    asyncpg expects JSONB parameters to be a JSON text; None stays None.
+    orjson is already a project dependency and handles defaults cleanly.
+    """
+    if value is None:
+        return None  # type: ignore[return-value]
+    return orjson.dumps(value).decode("utf-8")
 
 
 class EmailStorage:
@@ -91,16 +103,24 @@ class EmailStorage:
         thread_status: str,
         now: object,
     ) -> None:
-        """Write email metadata to intake.email_messages table."""
+        """Write email metadata to intake.email_messages table.
+
+        Persists every non-body Graph API field the dashboard needs:
+        full recipient lists (to/cc/bcc/reply-to), importance,
+        has_attachments flag, Outlook web link, and the RFC Message-ID.
+        """
         await self._postgres.execute(
             """
             INSERT INTO intake.email_messages
             (message_id, query_id, correlation_id, sender_email, sender_name,
              subject, body_text, body_html, received_at, parsed_at,
              in_reply_to, conversation_id, thread_status, vendor_id,
-             vendor_match_method, s3_raw_email_key, source, created_at)
+             vendor_match_method, s3_raw_email_key, source, created_at,
+             to_recipients, cc_recipients, bcc_recipients, reply_to,
+             importance, has_attachments, web_link, internet_message_id)
             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-                    $11, $12, $13, $14, $15, $16, $17, $18)
+                    $11, $12, $13, $14, $15, $16, $17, $18,
+                    $19, $20, $21, $22, $23, $24, $25, $26)
             """,
             message_id,
             query_id,
@@ -120,6 +140,14 @@ class EmailStorage:
             s3_raw_key,
             "email",
             now,
+            _jsonb(parsed.get("to_recipients") or []),
+            _jsonb(parsed.get("cc_recipients") or []),
+            _jsonb(parsed.get("bcc_recipients") or []),
+            _jsonb(parsed.get("reply_to") or []),
+            parsed.get("importance"),
+            bool(parsed.get("has_attachments", False)),
+            parsed.get("web_link"),
+            parsed.get("internet_message_id"),
         )
 
     async def store_attachment_metadata(

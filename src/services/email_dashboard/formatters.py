@@ -8,6 +8,8 @@ groups emails into conversation chains.
 
 from __future__ import annotations
 
+import orjson
+
 from models.email_dashboard import (
     AttachmentSummary,
     MailChainResponse,
@@ -15,6 +17,35 @@ from models.email_dashboard import (
     UserResponse,
 )
 from services.email_dashboard.mappings import DashboardMapper
+
+
+def _decode_recipients(value: object) -> list[UserResponse]:
+    """Decode a JSONB recipients column into a list of UserResponse.
+
+    asyncpg may return a JSONB value as list/dict (if a codec is
+    registered), as bytes, or as a str. Handle all shapes and tolerate
+    missing name/email fields so the API never 500s on bad data.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (bytes, bytearray)):
+        value = orjson.loads(value)
+    elif isinstance(value, str):
+        value = orjson.loads(value) if value else []
+
+    if not isinstance(value, list):
+        return []
+
+    out: list[UserResponse] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        email = item.get("email") or ""
+        if not email:
+            continue
+        name = item.get("name") or email
+        out.append(UserResponse(name=name, email=email))
+    return out
 
 
 class DashboardFormatter:
@@ -37,13 +68,21 @@ class DashboardFormatter:
             query_id=row["query_id"],
             message_id=row["message_id"],
             correlation_id=row["correlation_id"],
+            internet_message_id=row.get("internet_message_id"),
             sender=UserResponse(
                 name=row["sender_name"] or row["sender_email"],
                 email=row["sender_email"],
             ),
+            to_recipients=_decode_recipients(row.get("to_recipients")),
+            cc_recipients=_decode_recipients(row.get("cc_recipients")),
+            bcc_recipients=_decode_recipients(row.get("bcc_recipients")),
+            reply_to=_decode_recipients(row.get("reply_to")),
             subject=row["subject"],
             body=row["body_text"] or "",
             body_html=row.get("body_html"),
+            importance=row.get("importance"),
+            has_attachments=bool(row.get("has_attachments", False)),
+            web_link=row.get("web_link"),
             timestamp=DashboardMapper.format_timestamp(row["received_at"]),
             parsed_at=DashboardMapper.format_timestamp(row.get("parsed_at")),
             created_at=DashboardMapper.format_timestamp(row.get("created_at")),

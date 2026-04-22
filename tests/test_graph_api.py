@@ -143,6 +143,11 @@ class TestGraphAPIListUnread:
         assert result[0]["id"] == "msg-1"
         assert result[1]["id"] == "msg-2"
 
+        # The query must be scoped to the Inbox folder, otherwise unread
+        # items in Deleted Items / Archive / Junk leak through.
+        called_url = mock_client.request.call_args.kwargs["url"]
+        assert "/mailFolders/Inbox/messages" in called_url
+
     async def test_list_unread_empty_returns_empty_list(self, graph_connector) -> None:
         """Empty mailbox returns an empty list."""
         mock_response = _mock_response(200, {"value": []})

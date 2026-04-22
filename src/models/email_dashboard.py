@@ -57,12 +57,40 @@ class MailItemResponse(BaseModel):
     query_id: str = Field(description="VQMS query ID (e.g., VQ-2026-0001)")
     message_id: str = Field(description="Exchange Online message ID (unique per email)")
     correlation_id: str = Field(description="UUID v4 tracing ID propagated through the pipeline")
+    internet_message_id: str | None = Field(
+        default=None,
+        description="RFC 5322 Message-ID header (distinct from Graph's message_id)",
+    )
 
-    # Sender + subject + body
-    sender: UserResponse = Field(description="Email sender")
+    # Sender + full recipient lists
+    sender: UserResponse = Field(description="Email sender (from field)")
+    to_recipients: list[UserResponse] = Field(
+        default_factory=list, description="Primary recipients (To field)"
+    )
+    cc_recipients: list[UserResponse] = Field(
+        default_factory=list, description="CC recipients"
+    )
+    bcc_recipients: list[UserResponse] = Field(
+        default_factory=list,
+        description="BCC recipients (only populated when the mailbox is itself a BCC)",
+    )
+    reply_to: list[UserResponse] = Field(
+        default_factory=list, description="Reply-To addresses if different from sender"
+    )
+
+    # Subject + body
     subject: str = Field(description="Email subject line")
     body: str = Field(description="Plain text email body")
     body_html: str | None = Field(default=None, description="Sanitized HTML email body, if available")
+    importance: str | None = Field(
+        default=None, description="Exchange importance: low, normal, or high"
+    )
+    has_attachments: bool = Field(
+        default=False, description="True if the email has one or more attachments"
+    )
+    web_link: str | None = Field(
+        default=None, description="Outlook Web Access URL for this email"
+    )
 
     # Timestamps (ISO 8601 IST strings)
     timestamp: str = Field(description="Received time in ISO 8601 IST format (received_at)")

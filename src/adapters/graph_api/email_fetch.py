@@ -89,10 +89,15 @@ class EmailFetchMixin:
         top: int = 50,
         correlation_id: str = "",
     ) -> list[dict]:
-        """List unread messages in the shared mailbox.
+        """List unread messages in the mailbox's Inbox folder.
 
-        Used by the reconciliation poller to catch emails that
-        the webhook might have missed.
+        Scoped to the Inbox only. The mailbox-level /messages endpoint
+        would also return unread items from Deleted Items, Archive,
+        Junk Email, and every other folder — surprising behavior when
+        a human opens Outlook and only sees Inbox contents.
+
+        Used by the reconciliation poller to catch emails that the
+        webhook might have missed.
 
         Args:
             top: Maximum number of messages to return (default 50).
@@ -101,7 +106,10 @@ class EmailFetchMixin:
         Returns:
             List of message dicts (id, subject, from, receivedDateTime).
         """
-        url = f"{GRAPH_BASE_URL}/users/{self._mailbox}/messages"
+        url = (
+            f"{GRAPH_BASE_URL}/users/{self._mailbox}"
+            "/mailFolders/Inbox/messages"
+        )
         response = await self._request(
             "GET",
             url,
