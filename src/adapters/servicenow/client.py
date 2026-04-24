@@ -77,6 +77,13 @@ class ServiceNowClient:
         # field (e.g. "System Administrator"), or "" when the user cannot
         # be resolved.
         self._user_display_name_cache: dict[str, str] = {}
+        # Per-process cache for sys_user sys_id lookups. Same key shape as
+        # the display-name cache above. Exists because corporate ServiceNow
+        # orgs often have multiple users with the same ``name`` (display)
+        # field — e.g. two people both called "Arun" with a trailing-space
+        # variant — which makes display-value resolution unreliable. POSTing
+        # caller_id as a sys_id skips the ambiguity entirely.
+        self._user_sys_id_cache: dict[str, str] = {}
 
     def _resolve_base_url(self) -> str:
         """Work out the ServiceNow base URL from settings.
@@ -270,6 +277,65 @@ class ServiceNowClient:
             resolved = ""
 
         self._user_display_name_cache[lookup] = resolved
+        return resolved
+
+    async def resolve_user_sys_id(self, user_name: str) -> str:
+        """Return the sys_user.sys_id for a given `user_name`.
+
+        Why this exists instead of just using the display name:
+        ServiceNow's ``sysparm_input_display_value=true`` resolves
+        reference fields by matching the *display* field. For sys_user
+        that's ``name``, and in real-world orgs multiple users can
+        share a ``name`` (classic homonyms like two "Arun" entries,
+        or a subtle variant with a trailing space). When resolution is
+        ambiguous, ServiceNow picks an arbitrary match — the ticket
+        ends up linked to the wrong user, and UI filters like
+        ``Affected User = <me>`` don't show it.
+
+        POSTing the sys_id directly avoids the ambiguity entirely.
+        ServiceNow accepts a sys_id in any reference field regardless
+        of the display-value flag.
+
+        Args:
+            user_name: The sys_user.user_name to look up (the login,
+                e.g. ``"admin"`` or ``"ArunkumarV@hexaware.com"``).
+
+        Returns:
+            The user's sys_id, or "" when the lookup fails. Results
+            (hit or miss) are cached per process.
+        """
+        lookup = (user_name or "").strip()
+        if not lookup:
+            return ""
+
+        cached = self._user_sys_id_cache.get(lookup)
+        if cached is not None:
+            return cached
+
+        try:
+            client = self._get_client()
+            url = f"{self._base_url}/api/now/table/sys_user"
+            response = await client.get(
+                url,
+                params={
+                    "sysparm_query": f"user_name={lookup}",
+                    "sysparm_fields": "sys_id,user_name,name",
+                    "sysparm_limit": 1,
+                },
+            )
+            response.raise_for_status()
+            results = response.json().get("result", []) or []
+            resolved = (results[0].get("sys_id") or "").strip() if results else ""
+        except Exception:  # noqa: BLE001 - lookup failure is non-critical
+            logger.warning(
+                "ServiceNow user sys_id lookup failed — caller_id will "
+                "fall back to display name and may resolve to the wrong user",
+                tool="servicenow",
+                user_name=lookup,
+            )
+            resolved = ""
+
+        self._user_sys_id_cache[lookup] = resolved
         return resolved
 
     @staticmethod

@@ -170,7 +170,6 @@ async def check_servicenow(
         f"  Password:      {mask_password(eff_password)} "
         f"(len={len(eff_password) if eff_password else 0})"
     )
-    print(f"  Assignment Gr: {settings.servicenow_assignment_group or '(not set)'}")
     print()
 
     # --- Check 0: Credentials present ---

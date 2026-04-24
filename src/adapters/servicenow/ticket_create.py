@@ -76,15 +76,25 @@ class TicketCreateMixin:
         # is still created and is visible under "Incident → All" in the UI.
         assignment_group = (request.assigned_team or "").strip()
 
-        # Resolve caller_id to the authenticated ServiceNow user's display
-        # name ("System Administrator" for the "admin" account). This is
-        # what puts the ticket into the default "Self Service" view, which
-        # filters by Caller = <logged-in user>. The lookup is cached, so
-        # this only hits ServiceNow once per process.
+        # Resolve the API session user and pick the best representation
+        # for caller_id. We prefer the sys_user.sys_id (unambiguous, survives
+        # display-name collisions) and fall back to the display name only
+        # when sys_id lookup failed — the old behaviour, which still works
+        # on instances with a single matching user.
+        #
+        # Why this matters: if two sys_user rows share the same `name`
+        # field (e.g. two "Arun" users in the same org), POSTing the
+        # display name with sysparm_input_display_value=true lets
+        # ServiceNow pick an arbitrary match. The ticket then links to
+        # the wrong user, and UI filters like "Caller = <me>" or
+        # "Affected User = <me>" silently miss it. sys_id is unique.
         caller_user_name = (
             getattr(self._settings, "servicenow_username", "") or ""
         ).strip()
+        caller_sys_id = await self.resolve_user_sys_id(caller_user_name)
         caller_display = await self.resolve_user_display_name(caller_user_name)
+        # Prefer sys_id when we got one; display name is the fallback.
+        caller_value = caller_sys_id or caller_display
 
         # One-line VQMS provenance breadcrumb on the ServiceNow Activity
         # log. This is internal-only (work_notes are not shown to the
@@ -122,14 +132,14 @@ class TicketCreateMixin:
             # assigned_to blank so the team can self-assign after triage.
             "assignment_group": assignment_group,
             # People + origin
-            "caller_id": caller_display,
+            "caller_id": caller_value,
             "contact_type": "email",
         }
 
         # Optional "Affected User"-style column for instances whose
         # default list filter keys off something other than caller_id.
         # Only add the key when the env var names a column — otherwise
-        # we'd send ``"": caller_display`` which ServiceNow rejects.
+        # we'd send ``"": caller_value`` which ServiceNow rejects.
         # The column existing on the target instance isn't something we
         # check here; if it doesn't exist, ServiceNow silently drops
         # the field, which is exactly what we want on environments
@@ -138,7 +148,7 @@ class TicketCreateMixin:
             getattr(self._settings, "servicenow_affected_user_field", None) or ""
         ).strip()
         if affected_user_field:
-            incident_data[affected_user_field] = caller_display
+            incident_data[affected_user_field] = caller_value
 
         incident_data.update({
             # SLA — due_date lets ServiceNow's "Overdue" filter and SLA widget
@@ -165,7 +175,10 @@ class TicketCreateMixin:
             query_id=request.query_id,
             priority=snow_priority,
             assignment_group=assignment_group,
-            caller_id=caller_display,
+            caller_user_name=caller_user_name,
+            caller_sys_id=caller_sys_id or "(not resolved)",
+            caller_display=caller_display or "(not resolved)",
+            caller_id_mode="sys_id" if caller_sys_id else "display_name",
             correlation_id=correlation_id,
         )
 

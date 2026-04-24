@@ -1465,7 +1465,6 @@ SERVICENOW_USERNAME=<your-snow-username>
 SERVICENOW_PASSWORD=<your-snow-password>
 SERVICENOW_CLIENT_ID=<your-snow-oauth-client-id>
 SERVICENOW_CLIENT_SECRET=<your-snow-oauth-client-secret>
-SERVICENOW_ASSIGNMENT_GROUP=<default-assignment-group>
 
 # ===========================
 # AWS S3 (Storage — single bucket, prefix-organized)

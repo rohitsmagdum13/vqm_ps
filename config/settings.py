@@ -180,7 +180,6 @@ class Settings(BaseSettings):
     servicenow_password: str | None = None
     servicenow_client_id: str | None = None
     servicenow_client_secret: str | None = None
-    servicenow_assignment_group: str | None = None
     # Optional: some ServiceNow instances (notably Hexaware corporate
     # orgs) default their list views to filter by a custom "Affected
     # User" column rather than the stock "Caller". When this env var
