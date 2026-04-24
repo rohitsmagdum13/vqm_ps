@@ -124,6 +124,23 @@ class TicketCreateMixin:
             # People + origin
             "caller_id": caller_display,
             "contact_type": "email",
+        }
+
+        # Optional "Affected User"-style column for instances whose
+        # default list filter keys off something other than caller_id.
+        # Only add the key when the env var names a column — otherwise
+        # we'd send ``"": caller_display`` which ServiceNow rejects.
+        # The column existing on the target instance isn't something we
+        # check here; if it doesn't exist, ServiceNow silently drops
+        # the field, which is exactly what we want on environments
+        # without the customisation.
+        affected_user_field = (
+            getattr(self._settings, "servicenow_affected_user_field", None) or ""
+        ).strip()
+        if affected_user_field:
+            incident_data[affected_user_field] = caller_display
+
+        incident_data.update({
             # SLA — due_date lets ServiceNow's "Overdue" filter and SLA widget
             # work without us having to configure a ServiceNow SLA definition.
             "due_date": sla_deadline_str,
@@ -140,7 +157,7 @@ class TicketCreateMixin:
             "u_vqms_vendor_name": request.vendor_name or "",
             "u_vqms_sla_hours": str(request.sla_hours),
             "u_vqms_sla_deadline": sla_deadline_str,
-        }
+        })
 
         logger.info(
             "Creating ServiceNow incident",

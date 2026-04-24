@@ -181,6 +181,16 @@ class Settings(BaseSettings):
     servicenow_client_id: str | None = None
     servicenow_client_secret: str | None = None
     servicenow_assignment_group: str | None = None
+    # Optional: some ServiceNow instances (notably Hexaware corporate
+    # orgs) default their list views to filter by a custom "Affected
+    # User" column rather than the stock "Caller". When this env var
+    # is set to the column name (e.g. "u_affected_user"), the adapter
+    # additionally populates that field with the same user display
+    # name it already writes to caller_id. Leave blank on instances
+    # where no such column exists — a blank value is a no-op, so this
+    # is safe to leave set across environments if the column simply
+    # does not exist on some of them.
+    servicenow_affected_user_field: str | None = None
 
     # ===========================
     # AWS S3 (Storage — single bucket, prefix-organized)
