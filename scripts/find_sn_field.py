@@ -17,6 +17,7 @@ Usage:
     uv run python scripts/find_sn_field.py
     uv run python scripts/find_sn_field.py --label "Affected User"
     uv run python scripts/find_sn_field.py --label Affected --table incident
+    ok
 """
 
 from __future__ import annotations
