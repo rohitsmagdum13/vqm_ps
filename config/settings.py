@@ -316,6 +316,27 @@ class Settings(BaseSettings):
     # synced yet). Leave empty to reject every unresolved sender.
     email_filter_allowed_sender_domains: list[str] = []
 
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def aws_credentials_kwargs(self) -> dict[str, str]:
+        """Return AWS credential kwargs for ``boto3.client(...)``.
+
+        Only includes keys whose values are set in ``.env``. When a key is
+        missing, boto3 falls back to its default credential chain (shell
+        env vars, ``~/.aws/credentials``, IAM role). Passing ``None``
+        explicitly would override that chain, so we filter empties out.
+        """
+        kwargs: dict[str, str] = {}
+        if self.aws_access_key_id:
+            kwargs["aws_access_key_id"] = self.aws_access_key_id
+        if self.aws_secret_access_key:
+            kwargs["aws_secret_access_key"] = self.aws_secret_access_key
+        if self.aws_session_token:
+            kwargs["aws_session_token"] = self.aws_session_token
+        return kwargs
+
 
 # Module-level singleton — created once, reused across the app
 _settings: Settings | None = None

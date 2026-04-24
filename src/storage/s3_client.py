@@ -47,7 +47,11 @@ class S3Connector:
         Creates the boto3 S3 client immediately — no lazy init
         needed since the client is lightweight and thread-safe.
         """
-        self._client = boto3.client("s3", region_name=settings.aws_region)
+        self._client = boto3.client(
+            "s3",
+            region_name=settings.aws_region,
+            **settings.aws_credentials_kwargs(),
+        )
         self._settings = settings
 
     @log_service_call

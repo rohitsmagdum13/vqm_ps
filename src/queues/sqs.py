@@ -45,7 +45,11 @@ class SQSConnector:
 
         Creates the boto3 SQS client immediately.
         """
-        self._client = boto3.client("sqs", region_name=settings.aws_region)
+        self._client = boto3.client(
+            "sqs",
+            region_name=settings.aws_region,
+            **settings.aws_credentials_kwargs(),
+        )
         self._settings = settings
 
     @log_service_call

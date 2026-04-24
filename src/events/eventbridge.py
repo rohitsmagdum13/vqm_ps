@@ -75,7 +75,11 @@ class EventBridgeConnector:
 
         Creates the boto3 EventBridge client immediately.
         """
-        self._client = boto3.client("events", region_name=settings.aws_region)
+        self._client = boto3.client(
+            "events",
+            region_name=settings.aws_region,
+            **settings.aws_credentials_kwargs(),
+        )
         self._bus_name = settings.eventbridge_bus_name
         self._source = settings.eventbridge_source
 

@@ -86,6 +86,7 @@ class BedrockConnector:
         self._client = boto3.client(
             "bedrock-runtime",
             region_name=settings.bedrock_region,
+            **settings.aws_credentials_kwargs(),
         )
         self._model_id = settings.bedrock_model_id
         self._temperature = settings.bedrock_temperature
