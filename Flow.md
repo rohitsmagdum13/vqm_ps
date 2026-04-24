@@ -464,10 +464,10 @@ Read-only endpoints serving email data for the frontend dashboard. Groups emails
 
 | Endpoint | What it does |
 |----------|-------------|
-| `GET /emails` | Paginated list of email chains. Filters: status (New/Reopened/Resolved), priority (High/Medium/Low), search (ILIKE on subject/sender). Sort by timestamp/status/priority. Uses 4-query pattern: count → thread keys → emails → attachments (no N+1). |
+| `GET /emails` | Paginated list of email chains. Filters: status (New/Reopened/Resolved), priority (High/Medium/Low), search (ILIKE on subject/sender). Sort by timestamp/status/priority. Uses 4-query pattern: count → thread keys → emails → attachments (no N+1). Each `AttachmentSummary` includes an inline presigned `download_url` (1h) so the admin portal can render direct download links without a second API call. |
 | `GET /emails/stats` | Aggregate counts: total, by status category, by priority, today, this week. Single-pass query with `COUNT(*) FILTER`. |
-| `GET /emails/{query_id}` | Single email chain. If conversation_id exists, returns full thread. Batch-fetches attachments. |
-| `GET /emails/{query_id}/attachments/{attachment_id}/download` | Presigned S3 URL (1-hour expiry) via `S3Connector.generate_presigned_url()`. |
+| `GET /emails/{query_id}` | Single email chain. If conversation_id exists, returns full thread. Batch-fetches attachments with inline presigned `download_url` per attachment. |
+| `GET /emails/{query_id}/attachments/{attachment_id}/download` | On-demand presigned S3 URL (1-hour expiry) via `S3Connector.generate_presigned_url()`. Kept as a fallback for refreshing a single expired URL. |
 
 Status mapping: DB `RECEIVED/ANALYZING/ROUTING/...` → `"New"`, `REOPENED` → `"Reopened"`, `RESOLVED/CLOSED` → `"Resolved"`.
 Priority mapping: `routing_decision.priority` → `"High"/"Medium"/"Low"` (default `"Medium"` when routing hasn't run).

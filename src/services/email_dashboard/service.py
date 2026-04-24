@@ -67,7 +67,9 @@ class EmailDashboardService:
         self._postgres = postgres
         self._s3 = s3
         self._settings = settings
-        self._query_builder = DashboardQueryBuilder(postgres)
+        self._query_builder = DashboardQueryBuilder(
+            postgres, s3, settings.s3_bucket_data_store
+        )
 
     # ------------------------------------------------------------------
     # Public methods
@@ -184,7 +186,7 @@ class EmailDashboardService:
             # Step 4: Batch-fetch all attachments for these emails
             message_ids = [row["message_id"] for row in email_rows]
             attachments_by_message = await self._query_builder.batch_fetch_attachments(
-                message_ids
+                message_ids, correlation_id=correlation_id
             )
 
             # Group emails into chains preserving page order
@@ -353,7 +355,7 @@ class EmailDashboardService:
             # Batch-fetch attachments
             message_ids = [row["message_id"] for row in email_rows]
             attachments_by_message = await self._query_builder.batch_fetch_attachments(
-                message_ids
+                message_ids, correlation_id=correlation_id
             )
 
             # Build mail items

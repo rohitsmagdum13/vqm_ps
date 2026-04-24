@@ -40,6 +40,17 @@ class AttachmentSummary(BaseModel):
     content_type: str = Field(description="MIME type (e.g., application/pdf)")
     size_bytes: int = Field(description="File size in bytes")
     file_format: str = Field(description="Uppercase file extension (e.g., PDF, XLSX, UNKNOWN)")
+    # Admin portal renders attachments with a direct download link,
+    # so we embed the presigned URL here instead of making the
+    # frontend hit a second endpoint per attachment.
+    download_url: str | None = Field(
+        default=None,
+        description="Presigned S3 URL to download the attachment (None if s3_key missing)",
+    )
+    expires_in_seconds: int = Field(
+        default=3600,
+        description="Presigned URL validity window in seconds",
+    )
 
 
 class MailItemResponse(BaseModel):
