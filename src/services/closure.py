@@ -376,16 +376,24 @@ class ClosureService:
     ) -> str | None:
         """Return the most recent query_id for the given conversation.
 
-        NULL on failure — the caller treats that as "nothing to do".
+        conversation_id is stored on ``intake.email_messages`` (not
+        on ``workflow.case_execution`` — the workflow schema stays
+        source-agnostic). We JOIN by query_id to get the latest
+        workflow row for this thread.
+
+        Returns None on DB failure — caller treats that as
+        "nothing to do".
         """
         try:
             row = await self._postgres.fetchrow(
                 """
-                SELECT query_id
-                FROM workflow.case_execution
-                WHERE conversation_id = $1
-                ORDER BY created_at DESC
-                LIMIT 1
+                SELECT ce.query_id
+                  FROM workflow.case_execution ce
+                  JOIN intake.email_messages em
+                    ON em.query_id = ce.query_id
+                 WHERE em.conversation_id = $1
+                 ORDER BY ce.created_at DESC
+                 LIMIT 1
                 """,
                 conversation_id,
             )

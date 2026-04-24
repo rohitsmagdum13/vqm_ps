@@ -24,6 +24,7 @@ import structlog
 
 from config.settings import Settings
 from adapters.graph_api import GraphAPIConnector
+from queues.sqs import SQSConnector
 from services.email_intake import EmailIntakeService
 from utils.decorators import log_service_call
 from utils.helpers import IdGenerator
@@ -32,11 +33,18 @@ logger = structlog.get_logger(__name__)
 
 
 class ReconciliationPoller:
-    """Polls the shared mailbox for unread emails.
+    """Polls the shared mailbox for unread emails AND drains the outbox.
 
-    Runs as a background task, calling list_unread_messages every
-    poll_interval seconds. Each unread message is passed to
-    EmailIntakeService.process_email, which handles idempotency.
+    Two responsibilities, both non-critical catch-ups for failures in
+    the primary real-time paths:
+
+    1. Unread email reconciliation — fetches messages the webhook may
+       have missed and re-enters the ingestion pipeline for them.
+
+    2. Outbox drain — re-publishes any ``cache.outbox_events`` rows
+       whose first publish attempt failed (SQS outage, auth blip).
+       Without this step a transient SQS failure would leave an email
+       durably persisted in the DB but never visible to the AI pipeline.
     """
 
     def __init__(
@@ -44,6 +52,8 @@ class ReconciliationPoller:
         email_intake: EmailIntakeService,
         graph_api: GraphAPIConnector,
         settings: Settings,
+        postgres: object | None = None,
+        sqs: SQSConnector | None = None,
     ) -> None:
         """Initialize with required services and settings.
 
@@ -51,9 +61,15 @@ class ReconciliationPoller:
             email_intake: The email intake service for processing.
             graph_api: Graph API connector for listing unread messages.
             settings: Application settings (poll interval).
+            postgres: PostgresConnector — required for outbox drain.
+                Optional so older call-sites that only want unread
+                reconciliation still work.
+            sqs: SQSConnector — required for outbox drain.
         """
         self._email_intake = email_intake
         self._graph_api = graph_api
+        self._postgres = postgres
+        self._sqs = sqs
         self._poll_interval = settings.graph_api_poll_interval_seconds
         self._running = False
 
@@ -117,13 +133,85 @@ class ReconciliationPoller:
                     correlation_id=correlation_id,
                 )
 
+        # After the unread reconciliation, try to flush anything stuck
+        # in the outbox from prior failed publish attempts. This runs
+        # last so a slow drain never delays finding new unread mail.
+        drained = await self._drain_outbox(correlation_id=correlation_id)
+
         logger.info(
             "Poller cycle complete",
             processed_count=processed_count,
             total_unread=len(unread_messages),
+            outbox_drained=drained,
             correlation_id=correlation_id,
         )
         return processed_count
+
+    async def _drain_outbox(
+        self,
+        *,
+        correlation_id: str,
+        limit: int = 50,
+    ) -> int:
+        """Re-publish any unsent cache.outbox_events rows.
+
+        Skips silently when postgres/sqs weren't wired up (e.g. in
+        tests). Each row is published independently — one failure
+        doesn't block the rest.
+
+        Returns the count of successfully re-published rows.
+        """
+        if self._postgres is None or self._sqs is None:
+            return 0
+
+        try:
+            rows = await self._postgres.fetch_unsent_outbox(limit=limit)
+        except Exception:
+            logger.warning(
+                "Outbox fetch failed — skipping drain this cycle",
+                correlation_id=correlation_id,
+            )
+            return 0
+
+        if not rows:
+            return 0
+
+        sent = 0
+        for row in rows:
+            event_key = row.get("event_key")
+            queue_url = row.get("queue_url")
+            payload = row.get("payload")
+            if not event_key or not queue_url or payload is None:
+                continue
+
+            try:
+                await self._sqs.send_message(
+                    queue_url, payload, correlation_id=correlation_id
+                )
+                await self._postgres.mark_outbox_sent(event_key)
+                sent += 1
+            except Exception as exc:
+                try:
+                    await self._postgres.record_outbox_failure(
+                        event_key, str(exc)
+                    )
+                except Exception:
+                    pass  # best-effort
+                logger.warning(
+                    "Outbox drain publish failed — will retry next cycle",
+                    event_key=event_key,
+                    error=str(exc),
+                    correlation_id=correlation_id,
+                )
+
+        if sent:
+            logger.info(
+                "Outbox drain published messages",
+                sent=sent,
+                attempted=len(rows),
+                correlation_id=correlation_id,
+            )
+        return sent
 
     async def start_polling_loop(self) -> None:
         """Run the polling loop continuously.

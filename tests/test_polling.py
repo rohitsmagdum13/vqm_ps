@@ -33,6 +33,85 @@ def poller(mock_email_intake, mock_graph_api, mock_settings) -> ReconciliationPo
     )
 
 
+@pytest.fixture
+def poller_with_outbox(
+    mock_email_intake,
+    mock_graph_api,
+    mock_settings,
+    mock_postgres,
+    mock_sqs_connector,
+) -> ReconciliationPoller:
+    """Poller wired up with postgres + sqs so outbox drain runs."""
+    return ReconciliationPoller(
+        email_intake=mock_email_intake,
+        graph_api=mock_graph_api,
+        settings=mock_settings,
+        postgres=mock_postgres,
+        sqs=mock_sqs_connector,
+    )
+
+
+@pytest.fixture
+def mock_sqs_connector() -> AsyncMock:
+    """Mock SQS connector (polling only needs send_message)."""
+    mock = AsyncMock()
+    mock.send_message.return_value = "mock-message-id"
+    return mock
+
+
+class TestOutboxDrain:
+    """Verify the outbox drain inside poll_once."""
+
+    async def test_drain_publishes_pending_rows(
+        self, poller_with_outbox, mock_graph_api, mock_postgres, mock_sqs_connector
+    ) -> None:
+        """Unsent outbox rows are re-published and marked sent."""
+        mock_graph_api.list_unread_messages.return_value = []
+        mock_postgres.fetch_unsent_outbox.return_value = [
+            {
+                "id": 1,
+                "event_key": "VQ-2026-0001",
+                "queue_url": "https://sqs.us-east-1.amazonaws.com/1/test-queue",
+                "payload": {"query_id": "VQ-2026-0001", "source": "email"},
+                "attempt_count": 1,
+            },
+        ]
+
+        await poller_with_outbox.poll_once()
+
+        mock_sqs_connector.send_message.assert_called_once()
+        mock_postgres.mark_outbox_sent.assert_called_once_with("VQ-2026-0001")
+
+    async def test_drain_records_failure_when_publish_fails(
+        self, poller_with_outbox, mock_graph_api, mock_postgres, mock_sqs_connector
+    ) -> None:
+        """SQS failures record on the outbox row; sent_at stays NULL."""
+        mock_graph_api.list_unread_messages.return_value = []
+        mock_postgres.fetch_unsent_outbox.return_value = [
+            {
+                "id": 1,
+                "event_key": "VQ-2026-0002",
+                "queue_url": "https://sqs.us-east-1.amazonaws.com/1/test-queue",
+                "payload": {"query_id": "VQ-2026-0002"},
+                "attempt_count": 0,
+            },
+        ]
+        mock_sqs_connector.send_message.side_effect = Exception("throttled")
+
+        await poller_with_outbox.poll_once()
+
+        mock_postgres.record_outbox_failure.assert_called_once()
+        mock_postgres.mark_outbox_sent.assert_not_called()
+
+    async def test_drain_skipped_when_postgres_not_wired(
+        self, poller, mock_graph_api
+    ) -> None:
+        """Legacy poller without postgres/sqs still runs, just skips drain."""
+        mock_graph_api.list_unread_messages.return_value = []
+        # Should not raise.
+        await poller.poll_once()
+
+
 class TestPollOnce:
     """Tests for the poll_once method."""
 

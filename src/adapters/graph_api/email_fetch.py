@@ -122,3 +122,40 @@ class EmailFetchMixin:
         )
         data = response.json()
         return data.get("value", [])
+
+    @log_service_call
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    async def mark_as_read(
+        self,
+        message_id: str,
+        *,
+        correlation_id: str = "",
+    ) -> None:
+        """Mark a single email as read in Exchange Online.
+
+        Idempotent — marking an already-read message is a no-op on the
+        server side. Called after successful ingestion (including
+        dedup / relevance-rejected paths) so the poller's
+        'isRead eq false' filter only surfaces genuinely new mail next
+        cycle. Without this, the unread count in Outlook grows forever
+        and every poll cycle re-scans the same processed emails.
+
+        Args:
+            message_id: Exchange Online message ID.
+            correlation_id: Tracing ID.
+
+        Raises:
+            GraphAPIError: On non-2xx responses (retries 429/500/502/503).
+        """
+        url = f"{GRAPH_BASE_URL}/users/{self._mailbox}/messages/{message_id}"
+        await self._request(
+            "PATCH",
+            url,
+            json_body={"isRead": True},
+            correlation_id=correlation_id,
+        )

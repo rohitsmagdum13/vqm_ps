@@ -17,6 +17,7 @@ from typing import Any, Callable
 import structlog
 
 from utils.decorators.helpers import is_known_provider_error
+from utils.log_types import LOG_TYPE_ERROR, LOG_TYPE_LLM
 
 logger = structlog.get_logger(__name__)
 
@@ -25,8 +26,10 @@ def log_llm_call(func: Callable) -> Callable:
     """Log LLM call entry and exit with token/cost details.
 
     Expects the wrapped function to return a dict containing:
-    tokens_in, tokens_out, cost_usd, model_id (added by the Bedrock connector).
-    Logs: model, prompt_id, tokens, cost, latency_ms.
+    tokens_in, tokens_out, cost_usd, model_id (added by the Bedrock
+    connector). Logs: model, prompt_id, tokens, cost, latency_ms, and
+    ``log_type="llm"`` on the happy path. Failure paths emit
+    ``log_type="error"`` so a single filter catches every fault.
     """
 
     @functools.wraps(func)
@@ -36,6 +39,7 @@ def log_llm_call(func: Callable) -> Callable:
 
         logger.info(
             "LLM call started",
+            log_type=LOG_TYPE_LLM,
             function=func_name,
             correlation_id=correlation_id,
         )
@@ -46,6 +50,7 @@ def log_llm_call(func: Callable) -> Callable:
 
             # Extract LLM-specific metrics from the result if it's a dict
             log_kwargs: dict[str, Any] = {
+                "log_type": LOG_TYPE_LLM,
                 "function": func_name,
                 "correlation_id": correlation_id,
                 "duration_ms": round(duration_ms, 2),
@@ -66,6 +71,7 @@ def log_llm_call(func: Callable) -> Callable:
                 # will handle the fallback to the secondary provider.
                 logger.warning(
                     "LLM call failed (known provider error)",
+                    log_type=LOG_TYPE_ERROR,
                     function=func_name,
                     correlation_id=correlation_id,
                     duration_ms=round(duration_ms, 2),
@@ -75,6 +81,7 @@ def log_llm_call(func: Callable) -> Callable:
             else:
                 logger.exception(
                     "LLM call failed",
+                    log_type=LOG_TYPE_ERROR,
                     function=func_name,
                     correlation_id=correlation_id,
                     duration_ms=round(duration_ms, 2),
@@ -95,6 +102,7 @@ def log_llm_call(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.info(
                 "LLM call completed",
+                log_type=LOG_TYPE_LLM,
                 function=func.__qualname__,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),
@@ -106,6 +114,7 @@ def log_llm_call(func: Callable) -> Callable:
             if is_known_provider_error(exc):
                 logger.warning(
                     "LLM call failed (known provider error)",
+                    log_type=LOG_TYPE_ERROR,
                     function=func.__qualname__,
                     correlation_id=correlation_id,
                     duration_ms=round(duration_ms, 2),
@@ -115,6 +124,7 @@ def log_llm_call(func: Callable) -> Callable:
             else:
                 logger.exception(
                     "LLM call failed",
+                    log_type=LOG_TYPE_ERROR,
                     function=func.__qualname__,
                     correlation_id=correlation_id,
                     duration_ms=round(duration_ms, 2),

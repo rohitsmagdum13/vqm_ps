@@ -102,15 +102,24 @@ class TestProcessEmailHappyPath:
     async def test_db_writes_called(
         self, email_service, mock_postgres
     ) -> None:
-        """Email metadata, attachment metadata, and case execution are written to DB."""
+        """Email metadata, attachment metadata, case execution + outbox
+        row are written in a single transaction."""
         await email_service.process_email("AAMkAGI2TG93AAA=")
 
-        # check_idempotency + 3 execute calls:
-        #   1. email_messages INSERT
-        #   2. email_attachments INSERT (1 attachment in sample data)
-        #   3. case_execution INSERT
+        # Claim-check is the first DB hit.
         assert mock_postgres.check_idempotency.call_count == 1
-        assert mock_postgres.execute.call_count == 3
+
+        # Writes are now inside postgres.transaction() — inspect the
+        # connection mock attached to the fixture. Three go through
+        # tx.execute directly, one goes through postgres.enqueue_outbox
+        # (which in real code also uses the tx conn, but as a method
+        # call on the connector).
+        tx_conn = mock_postgres.transaction.tx_conn
+        assert tx_conn.execute.call_count == 3  # email_messages, attachments, case_execution
+        mock_postgres.enqueue_outbox.assert_called_once()  # outbox row in same txn
+
+        # Happy path must finalize the claim.
+        mock_postgres.mark_idempotency_complete.assert_called_once()
 
     async def test_eventbridge_event_published(
         self, email_service, mock_eventbridge_connector
@@ -143,6 +152,131 @@ class TestProcessEmailDuplicate:
 
         await email_service.process_email("AAMkAGI2TG93AAA=")
         mock_graph_api.fetch_email.assert_not_called()
+
+
+class TestClaimCheckIdempotency:
+    """Verify the claim-check pattern actually protects against email loss."""
+
+    async def test_happy_path_marks_idempotency_complete(
+        self, email_service, mock_postgres
+    ) -> None:
+        """Successful ingestion must flip the claim to COMPLETED."""
+        await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_postgres.mark_idempotency_complete.assert_called_once()
+        # Release must NOT be called on the happy path.
+        mock_postgres.release_idempotency_claim.assert_not_called()
+
+    async def test_fetch_failure_releases_claim(
+        self, email_service, mock_postgres, mock_graph_api
+    ) -> None:
+        """If fetch_email crashes, the claim is released so retry works."""
+        mock_graph_api.fetch_email.side_effect = Exception("Graph 500")
+
+        with pytest.raises(Exception, match="Graph 500"):
+            await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_postgres.release_idempotency_claim.assert_called_once()
+        mock_postgres.mark_idempotency_complete.assert_not_called()
+
+    async def test_db_failure_releases_claim(
+        self, email_service, mock_postgres
+    ) -> None:
+        """If the atomic DB write raises, the claim is released."""
+        # Make the transaction's execute blow up on commit attempts.
+        tx_conn = mock_postgres.transaction.tx_conn
+        tx_conn.execute.side_effect = Exception("DB down")
+
+        with pytest.raises(Exception, match="DB down"):
+            await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_postgres.release_idempotency_claim.assert_called_once()
+
+    async def test_duplicate_does_not_release_claim(
+        self, email_service, mock_postgres
+    ) -> None:
+        """A refused claim (duplicate/in-flight) must not touch release."""
+        mock_postgres.check_idempotency.return_value = False
+
+        await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_postgres.release_idempotency_claim.assert_not_called()
+        mock_postgres.mark_idempotency_complete.assert_not_called()
+
+
+class TestOutboxPublish:
+    """SQS publish failures must not lose the message — outbox holds it."""
+
+    async def test_sqs_failure_is_recoverable(
+        self, email_service, mock_postgres, mock_sqs_connector
+    ) -> None:
+        """SQS failure after DB commit → claim still COMPLETED, drainer retries.
+
+        The outbox row is durably in the DB (we already committed the
+        transaction), so the message is not lost. We mark the claim
+        COMPLETED so retries don't re-create the case_execution, and
+        we record the failure on the outbox row for the drainer.
+        """
+        mock_sqs_connector.send_message.side_effect = Exception("SQS throttled")
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        # Pipeline completes successfully — the data is in the DB.
+        assert result is not None
+        # Claim finalized despite SQS failure (outbox is the source of truth).
+        mock_postgres.mark_idempotency_complete.assert_called_once()
+        # Failure recorded on the outbox row for diagnostics.
+        mock_postgres.record_outbox_failure.assert_called_once()
+        # And NOT marked sent, so the drainer will pick it up.
+        mock_postgres.mark_outbox_sent.assert_not_called()
+
+    async def test_sqs_success_marks_outbox_sent(
+        self, email_service, mock_postgres
+    ) -> None:
+        """Happy path flips outbox row's sent_at."""
+        await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_postgres.mark_outbox_sent.assert_called_once()
+        mock_postgres.record_outbox_failure.assert_not_called()
+
+
+class TestMarkAsReadAfterProcessing:
+    """Verify emails are marked read on all three exit paths.
+
+    Without mark_as_read the reconciliation poller's 'isRead eq false'
+    filter would re-surface already-processed mail on every cycle.
+    """
+
+    async def test_happy_path_marks_email_as_read(
+        self, email_service, mock_graph_api
+    ) -> None:
+        """Successful SQS enqueue is followed by mark_as_read(message_id)."""
+        await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_graph_api.mark_as_read.assert_called_once()
+        call_args = mock_graph_api.mark_as_read.call_args
+        assert call_args.args[0] == "AAMkAGI2TG93AAA="
+
+    async def test_duplicate_still_marks_as_read(
+        self, email_service, mock_postgres, mock_graph_api
+    ) -> None:
+        """Duplicate emails are still marked read (defensive)."""
+        mock_postgres.check_idempotency.return_value = False
+
+        await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        mock_graph_api.mark_as_read.assert_called_once()
+
+    async def test_mark_as_read_failure_does_not_break_pipeline(
+        self, email_service, mock_graph_api
+    ) -> None:
+        """A failing mark_as_read does not roll back a successful ingestion."""
+        mock_graph_api.mark_as_read.side_effect = Exception("Graph 500")
+
+        result = await email_service.process_email("AAMkAGI2TG93AAA=")
+
+        # Pipeline result is still the parsed payload, not None/error.
+        assert result is not None
 
 
 class TestNonCriticalStepFailures:

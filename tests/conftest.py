@@ -7,8 +7,9 @@ All Phase 2 and later tests import fixtures from here.
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import boto3
 import pytest
@@ -154,14 +155,37 @@ def mock_postgres() -> AsyncMock:
     """AsyncMock of PostgresConnector for service-level tests.
 
     Pre-configured: check_idempotency returns True (new key),
-    execute/fetch/fetchrow return sensible defaults.
+    execute/fetch/fetchrow return sensible defaults. The
+    ``transaction()`` method yields a connection-like AsyncMock so
+    callers can ``async with postgres.transaction() as tx`` without
+    wiring a real asyncpg connection.
     """
     mock = AsyncMock()
     mock.check_idempotency.return_value = True
     mock.execute.return_value = "INSERT 0 1"
     mock.fetch.return_value = []
+    mock.fetch_unsent_outbox.return_value = []
     mock.fetchrow.return_value = None
     mock.health_check.return_value = True
+
+    # transaction() must be an async context manager. AsyncMock alone
+    # returns a coroutine, which can't be used with `async with`. We
+    # replace it with a real @asynccontextmanager that yields a fresh
+    # AsyncMock "connection" — tests that don't inspect tx.execute()
+    # calls just get a no-op context.
+    tx_conn = AsyncMock()
+    tx_conn.execute.return_value = "INSERT 0 1"
+
+    @asynccontextmanager
+    async def _fake_transaction():
+        yield tx_conn
+
+    # Use MagicMock (not AsyncMock) for the method itself so calling
+    # mock.transaction() returns the context manager directly rather
+    # than a coroutine that resolves to one.
+    mock.transaction = MagicMock(side_effect=_fake_transaction)
+    # Also expose the tx connection for tests that want to assert on it.
+    mock.transaction.tx_conn = tx_conn
     return mock
 
 

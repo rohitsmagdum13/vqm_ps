@@ -34,11 +34,19 @@ class ThreadCorrelator:
     ) -> str:
         """Check if this email is part of an existing thread.
 
-        Looks up the conversationId in workflow.case_execution
-        to determine if this is a new query, a reply to an open
-        case, or a reply to a closed case.
+        conversation_id lives on ``intake.email_messages`` (the source
+        of truth for thread identity) while workflow state lives on
+        ``workflow.case_execution``. We JOIN the two by query_id and
+        pick the most recently created case for this conversation.
 
-        Non-critical — returns "NEW" on failure.
+        Returns:
+            "NEW"             — no prior email in this conversation,
+                                or the email has no conversationId.
+            "EXISTING_OPEN"   — latest case for this conversation is
+                                still in flight.
+            "REPLY_TO_CLOSED" — latest case is CLOSED or RESOLVED.
+
+        Non-critical — returns "NEW" on any DB error (logged).
         """
         conversation_id = raw_email.get("conversationId")
         if not conversation_id:
@@ -46,13 +54,20 @@ class ThreadCorrelator:
 
         try:
             row = await self._postgres.fetchrow(
-                "SELECT query_id, status FROM workflow.case_execution "
-                "WHERE conversation_id = $1 ORDER BY created_at DESC LIMIT 1",
+                """
+                SELECT ce.query_id, ce.status
+                  FROM workflow.case_execution ce
+                  JOIN intake.email_messages em
+                    ON em.query_id = ce.query_id
+                 WHERE em.conversation_id = $1
+                 ORDER BY ce.created_at DESC
+                 LIMIT 1
+                """,
                 conversation_id,
             )
             if row is None:
                 return "NEW"
-            status = row.get("status", "")
+            status = (row.get("status") or "").upper()
             if status in ("CLOSED", "RESOLVED"):
                 return "REPLY_TO_CLOSED"
             return "EXISTING_OPEN"

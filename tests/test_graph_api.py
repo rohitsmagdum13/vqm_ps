@@ -161,6 +161,30 @@ class TestGraphAPIListUnread:
         assert result == []
 
 
+class TestGraphAPIMarkAsRead:
+    """Tests for mark_as_read method."""
+
+    async def test_mark_as_read_sends_patch_with_is_read_true(
+        self, graph_connector
+    ) -> None:
+        """mark_as_read issues PATCH /messages/{id} with isRead=true."""
+        mock_response = _mock_response(200, {"id": "msg-42", "isRead": True})
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+        mock_client.request.return_value = mock_response
+        graph_connector._http_client = mock_client
+
+        await graph_connector.mark_as_read(
+            "msg-42", correlation_id="test-mark-read"
+        )
+
+        call_kwargs = mock_client.request.call_args.kwargs
+        assert call_kwargs["method"] == "PATCH"
+        assert call_kwargs["url"].endswith("/messages/msg-42")
+        assert call_kwargs["json"] == {"isRead": True}
+
+
 class TestGraphAPISendEmail:
     """Tests for send_email method."""
 

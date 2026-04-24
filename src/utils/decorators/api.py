@@ -16,6 +16,7 @@ from typing import Any, Callable
 import structlog
 
 from utils.decorators.helpers import extract_correlation_id
+from utils.log_types import LOG_TYPE_ACCESS, LOG_TYPE_ERROR
 
 logger = structlog.get_logger(__name__)
 
@@ -24,7 +25,10 @@ def log_api_call(func: Callable) -> Callable:
     """Log FastAPI route handler entry and exit.
 
     Extracts correlation_id from the first Request argument's headers
-    (if present). Logs: method, path, correlation_id, status, duration_ms.
+    (if present). Logs: method, path, correlation_id, status,
+    duration_ms, and ``log_type="access"`` on the happy path
+    (``log_type="error"`` on exception so one CloudWatch filter
+    catches all failures).
     """
 
     @functools.wraps(func)
@@ -34,6 +38,7 @@ def log_api_call(func: Callable) -> Callable:
 
         logger.info(
             "API call started",
+            log_type=LOG_TYPE_ACCESS,
             function=func_name,
             correlation_id=correlation_id,
         )
@@ -43,6 +48,7 @@ def log_api_call(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.info(
                 "API call completed",
+                log_type=LOG_TYPE_ACCESS,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),
@@ -53,6 +59,7 @@ def log_api_call(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.exception(
                 "API call failed",
+                log_type=LOG_TYPE_ERROR,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),
@@ -67,6 +74,7 @@ def log_api_call(func: Callable) -> Callable:
 
         logger.info(
             "API call started",
+            log_type=LOG_TYPE_ACCESS,
             function=func_name,
             correlation_id=correlation_id,
         )
@@ -76,6 +84,7 @@ def log_api_call(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.info(
                 "API call completed",
+                log_type=LOG_TYPE_ACCESS,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),
@@ -86,6 +95,7 @@ def log_api_call(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.exception(
                 "API call failed",
+                log_type=LOG_TYPE_ERROR,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),

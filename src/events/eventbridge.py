@@ -33,6 +33,7 @@ from botocore.exceptions import ClientError
 from config.settings import Settings
 from utils.decorators import log_service_call
 from utils.helpers import TimeHelper
+from utils.log_types import LOG_TYPE_BUSINESS
 
 logger = structlog.get_logger(__name__)
 
@@ -160,8 +161,14 @@ class EventBridgeConnector:
 
         # Return the EventId from the first (only) entry
         event_id = response["Entries"][0].get("EventId", "")
+        # Tagged as "business" because each of the 20 VQMS event types
+        # (EmailParsed, TicketCreated, SLAWarning70, ...) represents a
+        # domain event humans care about on dashboards. The underlying
+        # put_events() API call itself is also integration, but the
+        # semantic meaning of this line is business-level.
         logger.info(
             "EventBridge event published",
+            log_type=LOG_TYPE_BUSINESS,
             tool="eventbridge",
             event_type=event_type,
             event_id=event_id,

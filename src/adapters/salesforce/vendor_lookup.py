@@ -21,6 +21,37 @@ from utils.decorators import log_service_call
 logger = structlog.get_logger(__name__)
 
 
+def _pick_business_vendor_id(
+    record: dict,
+    *,
+    correlation_id: str = "",
+) -> str:
+    """Prefer the human-readable Vendor_ID__c over the opaque SF record Id.
+
+    Vendor_ID__c (e.g. 'V-011') is the business key humans see in emails,
+    CRM views and dashboards. Salesforce's Id (e.g. 'a02al00000oA6U5AAK')
+    is the technical key. We store the business key so logs, DB rows, and
+    API responses are readable — downstream lookups already accept either
+    form via ``find_vendor_by_id``'s is_record_id dispatch.
+
+    Falls back to Id when Vendor_ID__c is missing so we never end up with
+    an empty vendor_id. Missing Vendor_ID__c on an otherwise-valid account
+    is a data-quality issue worth logging.
+    """
+    business_id = (record.get("Vendor_ID__c") or "").strip()
+    if business_id:
+        return business_id
+
+    fallback = (record.get("Id") or "").strip()
+    logger.warning(
+        "Salesforce record has no Vendor_ID__c — falling back to Id",
+        tool="salesforce",
+        sf_id=fallback or "(missing)",
+        correlation_id=correlation_id,
+    )
+    return fallback
+
+
 class VendorLookupMixin:
     """Vendor identification methods for the Salesforce connector.
 
@@ -45,7 +76,7 @@ class VendorLookupMixin:
         safe_email = email.replace("'", "\\'")
         soql = (
             "SELECT Vendor_Account__c, Vendor_Account__r.Id, "
-            "Vendor_Account__r.Name "
+            "Vendor_Account__r.Vendor_ID__c, Vendor_Account__r.Name "
             "FROM Vendor_Contact__c "
             f"WHERE Email__c = '{safe_email}' "
             "LIMIT 1"
@@ -74,7 +105,7 @@ class VendorLookupMixin:
 
         record = records[0]
         account = record.get("Vendor_Account__r", {}) or {}
-        vendor_id = account.get("Id", "")
+        vendor_id = _pick_business_vendor_id(account, correlation_id=correlation_id)
         vendor_name = account.get("Name", "")
 
         return VendorMatch(
@@ -140,7 +171,7 @@ class VendorLookupMixin:
         # Escape SOQL special characters and wrap in wildcards
         safe_name = name.replace("'", "\\'").replace("%", "\\%")
         soql = (
-            "SELECT Id, Name "
+            "SELECT Id, Name, Vendor_ID__c "
             "FROM Vendor_Account__c "
             f"WHERE Name LIKE '%{safe_name}%' "
             "LIMIT 1"
@@ -163,7 +194,7 @@ class VendorLookupMixin:
 
         record = records[0]
         return VendorMatch(
-            vendor_id=record.get("Id", ""),
+            vendor_id=_pick_business_vendor_id(record, correlation_id=correlation_id),
             vendor_name=record.get("Name", ""),
             match_method="fuzzy_name",
             confidence=0.6,

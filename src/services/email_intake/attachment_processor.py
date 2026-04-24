@@ -15,6 +15,7 @@ from pathlib import PurePosixPath
 
 import structlog
 
+from adapters.graph_api import GraphAPIConnector
 from config.s3_paths import S3_PREFIX_ATTACHMENTS, build_s3_key
 from config.settings import Settings
 from models.email import EmailAttachment
@@ -23,13 +24,21 @@ from storage.s3_client import S3Connector
 
 logger = structlog.get_logger(__name__)
 
+# Graph API inlines attachment bytes only up to ~3 MB. Anything larger
+# must be fetched via a second API call. We use the same threshold Graph
+# uses so our fallback kicks in exactly when their inline delivery drops
+# the bytes.
+_INLINE_BYTES_THRESHOLD: int = 3 * 1024 * 1024
+
 
 class AttachmentProcessor:
     """Validates, stores, and extracts text from email attachments.
 
     Uses the single-bucket S3 architecture with prefix-based
     organization. Enforces safety guardrails (blocked extensions,
-    size limits, count limits).
+    size limits, count limits). Falls back to a per-attachment Graph
+    API download for files whose bytes are too large for inline
+    delivery.
     """
 
     # Safety guardrails for attachments
@@ -39,18 +48,34 @@ class AttachmentProcessor:
     MAX_ATTACHMENT_COUNT: int = 10
     MAX_EXTRACTED_TEXT_LENGTH: int = 5000
 
-    def __init__(self, s3: S3Connector, settings: Settings) -> None:
-        """Initialize with S3 connector and settings.
+    def __init__(
+        self,
+        s3: S3Connector,
+        settings: Settings,
+        graph_api: GraphAPIConnector | None = None,
+    ) -> None:
+        """Initialize with S3 connector, settings, and Graph API adapter.
 
         Args:
             s3: S3 connector for attachment storage.
             settings: Application settings (bucket name).
+            graph_api: Optional Graph API connector used to download
+                attachments that exceed the inline-bytes threshold. When
+                not provided, oversized attachments are recorded with
+                ``extraction_status='failed'`` — unit tests that don't
+                exercise attachments can omit it.
         """
         self._s3 = s3
         self._settings = settings
+        self._graph_api = graph_api
 
     async def process_attachments(
-        self, raw_email: dict, query_id: str, correlation_id: str
+        self,
+        raw_email: dict,
+        query_id: str,
+        correlation_id: str,
+        *,
+        message_id: str | None = None,
     ) -> list[EmailAttachment]:
         """Process all attachments: validate, store to S3, extract text.
 
@@ -126,8 +151,25 @@ class AttachmentProcessor:
 
             # Try to decode and store the attachment
             try:
-                content_bytes_b64 = att.get("contentBytes", "")
-                content_bytes = base64.b64decode(content_bytes_b64) if content_bytes_b64 else b""
+                content_bytes = await self._resolve_attachment_bytes(
+                    att=att,
+                    message_id=message_id,
+                    size_bytes=size_bytes,
+                    filename=filename,
+                    correlation_id=correlation_id,
+                )
+                if not content_bytes:
+                    # No bytes could be resolved — record and move on.
+                    results.append(
+                        EmailAttachment(
+                            attachment_id=att_id,
+                            filename=filename,
+                            content_type=content_type,
+                            size_bytes=size_bytes,
+                            extraction_status="failed",
+                        )
+                    )
+                    continue
 
                 # Store to S3 using single-bucket architecture
                 s3_key = build_s3_key(
@@ -181,6 +223,71 @@ class AttachmentProcessor:
         )
 
         return results
+
+    async def _resolve_attachment_bytes(
+        self,
+        *,
+        att: dict,
+        message_id: str | None,
+        size_bytes: int,
+        filename: str,
+        correlation_id: str,
+    ) -> bytes:
+        """Return the raw bytes of a single attachment.
+
+        Graph API inlines ``contentBytes`` (Base64) only for files up to
+        ~3 MB. Above that the field is missing and a separate GET call
+        to ``/messages/{id}/attachments/{att_id}/$value`` is required.
+        We call that fallback when inline bytes are absent and we have
+        both a Graph adapter and the parent message_id.
+
+        Returns empty bytes when no source is available — the caller
+        then records the attachment with ``extraction_status='failed'``.
+        """
+        content_bytes_b64 = att.get("contentBytes", "")
+        if content_bytes_b64:
+            return base64.b64decode(content_bytes_b64)
+
+        # Inline bytes missing — either > 3 MB or Graph chose not to
+        # inline. Try the large-attachment endpoint if we can.
+        att_id = att.get("id")
+        if not att_id or not message_id or self._graph_api is None:
+            logger.warning(
+                "Attachment has no inline bytes and cannot be downloaded",
+                file_name=filename,
+                size_bytes=size_bytes,
+                has_graph=self._graph_api is not None,
+                has_message_id=message_id is not None,
+                correlation_id=correlation_id,
+            )
+            return b""
+
+        if size_bytes <= _INLINE_BYTES_THRESHOLD:
+            # Unusual: small attachment with no contentBytes. Log once
+            # and still attempt download — sometimes Graph omits bytes
+            # for message drafts or resent items.
+            logger.info(
+                "Small attachment missing inline bytes — fetching via /$value",
+                file_name=filename,
+                size_bytes=size_bytes,
+                correlation_id=correlation_id,
+            )
+
+        try:
+            return await self._graph_api.download_large_attachment(
+                message_id,
+                att_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Large attachment download failed — recording as failed",
+                file_name=filename,
+                attachment_id=att_id,
+                size_bytes=size_bytes,
+                correlation_id=correlation_id,
+            )
+            return b""
 
     async def _extract_text(
         self, content: bytes, content_type: str, filename: str

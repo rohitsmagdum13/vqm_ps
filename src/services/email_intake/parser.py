@@ -8,7 +8,19 @@ thread headers) from a Microsoft Graph API message response.
 
 from __future__ import annotations
 
+import html as html_module
 import re
+
+try:  # BeautifulSoup produces much cleaner text than a tag-stripping regex,
+    # especially for emails that contain <script>/<style> blocks or HTML
+    # entities. It's optional so the module still imports when bs4 is
+    # unavailable; we fall back to the regex path in that case.
+    from bs4 import BeautifulSoup  # type: ignore
+
+    _BS4_AVAILABLE = True
+except ImportError:  # pragma: no cover
+    BeautifulSoup = None  # type: ignore
+    _BS4_AVAILABLE = False
 
 
 class EmailParser:
@@ -99,15 +111,36 @@ class EmailParser:
 
     @staticmethod
     def html_to_text(html: str) -> str:
-        """Convert HTML to plain text by stripping tags.
+        """Convert HTML to plain text.
 
-        Simple regex-based approach for development. In production,
-        consider using beautifulsoup4 for more robust parsing.
+        Primary path uses BeautifulSoup, which drops ``<script>`` and
+        ``<style>`` bodies (so inline JS/CSS doesn't leak into the LLM
+        context) and decodes HTML entities. Falls back to a regex strip
+        when bs4 isn't installed — that path still decodes entities so
+        we never feed literal ``&amp;`` into Claude.
         """
         if not html:
             return ""
-        # Remove HTML tags
-        text = re.sub(r"<[^>]+>", " ", html)
-        # Collapse multiple whitespace
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
+
+        if _BS4_AVAILABLE:
+            soup = BeautifulSoup(html, "html.parser")
+            # Remove non-visible content before extracting text.
+            for bad in soup(("script", "style", "head", "title", "meta")):
+                bad.decompose()
+            text = soup.get_text(separator=" ")
+        else:
+            # Strip HTML comments first so contents aren't treated as text.
+            no_comments = re.sub(r"<!--.*?-->", " ", html, flags=re.DOTALL)
+            # Drop <script>/<style> blocks entirely, bodies and all.
+            stripped = re.sub(
+                r"<(script|style)[^>]*>.*?</\1>",
+                " ",
+                no_comments,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            text = re.sub(r"<[^>]+>", " ", stripped)
+
+        # Decode entities (&amp; → &, &nbsp; → space-like) and collapse
+        # repeated whitespace so downstream length checks stay meaningful.
+        text = html_module.unescape(text)
+        return re.sub(r"\s+", " ", text).strip()

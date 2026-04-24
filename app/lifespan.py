@@ -13,6 +13,8 @@ import asyncio
 from contextlib import asynccontextmanager
 
 import structlog
+
+from utils.log_types import LOG_TYPE_APPLICATION
 from fastapi import FastAPI
 
 from config.settings import get_settings
@@ -308,12 +310,15 @@ async def lifespan(application: FastAPI):
     # --- Store settings for route handlers ---
     application.state.settings = settings
 
-    logger.info("VQMS startup complete — all connectors initialized")
+    logger.info(
+        "VQMS startup complete — all connectors initialized",
+        log_type=LOG_TYPE_APPLICATION,
+    )
 
     yield  # App runs here
 
     # --- Shutdown ---
-    logger.info("VQMS shutting down")
+    logger.info("VQMS shutting down", log_type=LOG_TYPE_APPLICATION)
 
     if sla_monitor is not None:
         sla_monitor.stop()
@@ -347,4 +352,4 @@ async def lifespan(application: FastAPI):
         await postgres.disconnect()
         logger.info("PostgreSQL disconnected", tool="postgresql")
 
-    logger.info("VQMS shutdown complete")
+    logger.info("VQMS shutdown complete", log_type=LOG_TYPE_APPLICATION)

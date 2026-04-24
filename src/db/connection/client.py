@@ -24,6 +24,7 @@ if not hasattr(paramiko, "DSSKey"):
 from sshtunnel import SSHTunnelForwarder  # noqa: E402
 
 from config.settings import Settings
+from utils.log_types import LOG_TYPE_INTEGRATION
 
 logger = structlog.get_logger(__name__)
 
@@ -71,6 +72,7 @@ class PostgresClient:
             await self._create_pool_from_url()
             logger.info(
                 "PostgreSQL connector connected via DATABASE_URL (direct)",
+                log_type=LOG_TYPE_INTEGRATION,
                 tool="postgresql",
             )
         else:
@@ -79,6 +81,7 @@ class PostgresClient:
             connection_mode = "SSH tunnel" if self._tunnel else "direct (no tunnel)"
             logger.info(
                 "PostgreSQL connector connected",
+                log_type=LOG_TYPE_INTEGRATION,
                 tool="postgresql",
                 mode=connection_mode,
             )
@@ -91,12 +94,20 @@ class PostgresClient:
         if self._pool is not None:
             await self._pool.close()
             self._pool = None
-            logger.info("Connection pool closed", tool="postgresql")
+            logger.info(
+                "Connection pool closed",
+                log_type=LOG_TYPE_INTEGRATION,
+                tool="postgresql",
+            )
 
         if self._tunnel is not None:
             self._tunnel.stop()
             self._tunnel = None
-            logger.info("SSH tunnel closed", tool="postgresql")
+            logger.info(
+                "SSH tunnel closed",
+                log_type=LOG_TYPE_INTEGRATION,
+                tool="postgresql",
+            )
 
     def _get_pool(self) -> asyncpg.Pool:
         """Return the connection pool, raising if not connected."""
@@ -113,6 +124,7 @@ class PostgresClient:
             # If SSH is not configured, connect directly (for local dev with port-forwarding)
             logger.info(
                 "SSH tunnel not configured — connecting directly to PostgreSQL",
+                log_type=LOG_TYPE_INTEGRATION,
                 tool="postgresql",
             )
             return
@@ -130,6 +142,7 @@ class PostgresClient:
         self._tunnel.start()
         logger.info(
             "SSH tunnel established",
+            log_type=LOG_TYPE_INTEGRATION,
             tool="postgresql",
             local_port=self._tunnel.local_bind_port,
             rds_host=settings.rds_host,

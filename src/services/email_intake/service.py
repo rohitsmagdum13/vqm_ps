@@ -34,6 +34,7 @@ from services.email_intake.thread_correlator import ThreadCorrelator
 from services.email_intake.vendor_identifier import VendorIdentifier
 from utils.decorators import log_service_call
 from utils.helpers import IdGenerator, TimeHelper
+from utils.log_types import LOG_TYPE_SERVICE
 
 logger = structlog.get_logger(__name__)
 
@@ -95,7 +96,7 @@ class EmailIntakeService:
         self._closure_service = closure_service
 
         # Compose helper classes
-        self._attachment_processor = AttachmentProcessor(s3, settings)
+        self._attachment_processor = AttachmentProcessor(s3, settings, graph_api)
         self._vendor_identifier = VendorIdentifier(salesforce)
         self._thread_correlator = ThreadCorrelator(postgres)
         self._storage = EmailStorage(postgres, s3, settings)
@@ -133,18 +134,57 @@ class EmailIntakeService:
         # log calls (including in connectors) automatically include it
         structlog.contextvars.bind_contextvars(correlation_id=correlation_id)
 
-        # E2.1 [CRITICAL] Idempotency check — prevent duplicate processing
-        is_new = await self._postgres.check_idempotency(
+        # E2.1 [CRITICAL] Idempotency claim — claim-check pattern.
+        # Returns True only when this worker newly holds a PROCESSING
+        # claim (either inserted or reclaimed a stale one). Any error
+        # before mark_idempotency_complete releases the claim so the
+        # next attempt can retry — no more silent email loss if Graph
+        # or SQS blips after the claim was written.
+        claimed = await self._postgres.check_idempotency(
             message_id, "email", correlation_id
         )
-        if not is_new:
+        if not claimed:
             logger.info(
                 "Duplicate email skipped",
+                log_type=LOG_TYPE_SERVICE,
                 message_id=message_id,
                 correlation_id=correlation_id,
             )
+            # A duplicate or in-flight claim still needs to leave the
+            # poller's unread view. Safe on both COMPLETED rows (mark
+            # is a no-op at the Graph side for already-read mail) and
+            # on in-flight ones (the active worker will also mark it).
+            await self._mark_read_safe(message_id, correlation_id)
             return None
 
+        # Everything between here and mark_idempotency_complete runs
+        # inside a try/except that releases the claim on failure.
+        try:
+            return await self._run_claimed_pipeline(
+                message_id=message_id,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            # Free the claim immediately so the next poll cycle
+            # reattempts instead of waiting for the 10-minute TTL.
+            await self._postgres.release_idempotency_claim(
+                message_id, correlation_id
+            )
+            raise
+
+    async def _run_claimed_pipeline(
+        self,
+        *,
+        message_id: str,
+        correlation_id: str,
+    ) -> ParsedEmailPayload | None:
+        """Run the full pipeline under an already-acquired idempotency claim.
+
+        Split from ``process_email`` so the try/except around the claim
+        stays shallow and readable. Every exit path either marks the
+        claim COMPLETED (success) or raises — the outer catch in
+        ``process_email`` releases the claim on raise.
+        """
         # E1 [CRITICAL] Fetch email from Graph API
         raw_email = await self._graph_api.fetch_email(
             message_id, correlation_id=correlation_id
@@ -177,6 +217,14 @@ class EmailIntakeService:
                 message_id=message_id,
                 correlation_id=correlation_id,
             )
+            # Rejected mail is a legitimate terminal state: nothing will
+            # re-process it. Mark the claim COMPLETED so the key stays as
+            # a permanent duplicate guard, then mark the Outlook mail read
+            # so the poller doesn't re-evaluate it on every cycle.
+            await self._postgres.mark_idempotency_complete(
+                message_id, correlation_id
+            )
+            await self._mark_read_safe(message_id, correlation_id)
             return None
 
         # E2.7 [CRITICAL] Generate IDs
@@ -189,9 +237,11 @@ class EmailIntakeService:
             raw_email, query_id, correlation_id
         )
 
-        # E2.4 [NON-CRITICAL] Process attachments
+        # E2.4 [NON-CRITICAL] Process attachments (passes message_id so the
+        # processor can fall back to /$value download for large files that
+        # Graph doesn't inline).
         attachments = await self._attachment_processor.process_attachments(
-            raw_email, query_id, correlation_id
+            raw_email, query_id, correlation_id, message_id=message_id
         )
 
         # E2.6 [NON-CRITICAL] Thread correlation
@@ -199,54 +249,9 @@ class EmailIntakeService:
             raw_email, correlation_id
         )
 
-        # E2.8 [CRITICAL] Write metadata to database
-        await self._storage.store_email_metadata(
-            message_id=message_id,
-            query_id=query_id,
-            correlation_id=correlation_id,
-            parsed=parsed,
-            s3_raw_key=s3_raw_key,
-            vendor_id=vendor_id,
-            vendor_match_method=vendor_match_method,
-            thread_status=thread_status,
-            now=now,
-        )
-        # Write attachment metadata to intake.email_attachments
-        # Must happen AFTER email_messages INSERT because of the foreign key
-        await self._storage.store_attachment_metadata(
-            message_id=message_id,
-            query_id=query_id,
-            attachments=attachments,
-            correlation_id=correlation_id,
-        )
-        await self._storage.create_case_execution(
-            query_id=query_id,
-            correlation_id=correlation_id,
-            execution_id=execution_id,
-            vendor_id=vendor_id,
-            now=now,
-        )
-
-        # E2.9a [NON-CRITICAL] Publish EventBridge event
-        try:
-            await self._eventbridge.publish_event(
-                "EmailParsed",
-                {
-                    "query_id": query_id,
-                    "message_id": message_id,
-                    "sender_email": parsed["sender_email"],
-                    "vendor_id": vendor_id,
-                },
-                correlation_id=correlation_id,
-            )
-        except Exception:
-            logger.warning(
-                "EventBridge publish failed — continuing",
-                query_id=query_id,
-                correlation_id=correlation_id,
-            )
-
-        # E2.9b [CRITICAL] Enqueue to SQS for AI pipeline
+        # Build the SQS payload up front so we can hand it to both the
+        # outbox INSERT and the immediate publish attempt without
+        # rebuilding it.
         body_text = parsed.get("body_text", "") or parsed.get("body_preview", "")
         payload = UnifiedQueryPayload(
             query_id=query_id,
@@ -268,11 +273,70 @@ class EmailIntakeService:
                 "conversation_id": parsed.get("conversation_id"),
             },
         )
-        await self._sqs.send_message(
-            self._settings.sqs_email_intake_queue_url,
-            payload.model_dump(mode="json"),
+        payload_json = payload.model_dump(mode="json")
+        queue_url = self._settings.sqs_email_intake_queue_url
+
+        # E2.8 [CRITICAL] Atomic DB write: email_messages + attachments +
+        # case_execution + outbox row in one transaction. Either all four
+        # commit or none does — no more orphaned case_execution rows when
+        # SQS is down.
+        await self._storage.persist_email_atomically(
+            message_id=message_id,
+            query_id=query_id,
+            execution_id=execution_id,
+            correlation_id=correlation_id,
+            parsed=parsed,
+            s3_raw_key=s3_raw_key,
+            vendor_id=vendor_id,
+            vendor_match_method=vendor_match_method,
+            thread_status=thread_status,
+            attachments=attachments,
+            now=now,
+            outbox_queue_url=queue_url,
+            outbox_payload=payload_json,
+        )
+
+        # E2.9a [NON-CRITICAL] Publish EventBridge event
+        try:
+            await self._eventbridge.publish_event(
+                "EmailParsed",
+                {
+                    "query_id": query_id,
+                    "message_id": message_id,
+                    "sender_email": parsed["sender_email"],
+                    "vendor_id": vendor_id,
+                },
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "EventBridge publish failed — continuing",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )
+
+        # E2.9b Immediate publish attempt. Outbox already holds the
+        # payload, so a failure here is recoverable: the reconciliation
+        # poller's drain pass will retry it. We mark the claim COMPLETED
+        # regardless — the email is durably persisted, so re-processing
+        # it would only produce a duplicate case_execution.
+        await self._publish_from_outbox(
+            event_key=query_id,
+            queue_url=queue_url,
+            payload=payload_json,
             correlation_id=correlation_id,
         )
+
+        # Happy path: the message is durably in the system. Flip the
+        # idempotency claim to COMPLETED so it becomes a permanent
+        # duplicate guard.
+        await self._postgres.mark_idempotency_complete(
+            message_id, correlation_id
+        )
+
+        # Mark the Outlook mail read last — if this fails the poller will
+        # see the email again, but check_idempotency will skip it.
+        await self._mark_read_safe(message_id, correlation_id)
 
         # Phase 6 closure / reopen detection — non-critical.
         # A reply landing on an existing thread may be a vendor confirmation
@@ -323,6 +387,90 @@ class EmailIntakeService:
             correlation_id=correlation_id,
         )
         return result
+
+    async def _publish_from_outbox(
+        self,
+        *,
+        event_key: str,
+        queue_url: str,
+        payload: dict,
+        correlation_id: str,
+    ) -> None:
+        """Publish a staged outbox payload to SQS, updating its state.
+
+        Success → mark the outbox row sent.
+        Failure → record the error on the outbox row and keep going.
+        The drainer pass retries any rows still unsent.
+
+        This is deliberately non-raising: the outbox is the source of
+        truth, so a publish failure here never loses data — it just
+        delays delivery by one poll cycle.
+        """
+        try:
+            await self._sqs.send_message(
+                queue_url,
+                payload,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Outbox publish failed — drainer will retry",
+                tool="email_intake",
+                event_key=event_key,
+                error=str(exc),
+                correlation_id=correlation_id,
+            )
+            try:
+                await self._postgres.record_outbox_failure(
+                    event_key, str(exc)
+                )
+            except Exception:
+                # Recording the failure isn't critical; the drainer
+                # finds unsent rows by sent_at IS NULL, not by error.
+                logger.warning(
+                    "record_outbox_failure itself failed — continuing",
+                    tool="email_intake",
+                    event_key=event_key,
+                    correlation_id=correlation_id,
+                )
+            return
+
+        try:
+            await self._postgres.mark_outbox_sent(event_key)
+        except Exception:
+            # If we sent to SQS but couldn't flip sent_at, the drainer
+            # will re-send on its next pass — duplicates are safe
+            # because the downstream consumer idempotency keys on
+            # query_id.
+            logger.warning(
+                "mark_outbox_sent failed — drainer will re-send (safe duplicate)",
+                tool="email_intake",
+                event_key=event_key,
+                correlation_id=correlation_id,
+            )
+
+    async def _mark_read_safe(
+        self,
+        message_id: str,
+        correlation_id: str,
+    ) -> None:
+        """Mark the email as read; swallow and log any failure.
+
+        This is a housekeeping call and must never block or fail the
+        main pipeline. A transient 429 or a closed httpx client during
+        shutdown should not turn a successful ingestion into an error.
+        """
+        try:
+            await self._graph_api.mark_as_read(
+                message_id, correlation_id=correlation_id
+            )
+        except Exception:
+            logger.warning(
+                "mark_as_read failed — email will remain unread in Outlook",
+                tool="email_intake",
+                message_id=message_id,
+                correlation_id=correlation_id,
+            )
 
     async def _handle_rejected_email(
         self,

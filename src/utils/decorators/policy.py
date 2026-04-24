@@ -16,6 +16,8 @@ from typing import Any, Callable
 
 import structlog
 
+from utils.log_types import LOG_TYPE_ERROR, LOG_TYPE_POLICY
+
 logger = structlog.get_logger(__name__)
 
 
@@ -23,8 +25,11 @@ def log_policy_decision(func: Callable) -> Callable:
     """Log confidence checks and routing decisions.
 
     Expects the wrapped function to return a dict with a 'decision'
-    key describing the outcome (e.g., "path_a", "path_c", "route_to_team_x").
-    Logs: threshold, actual_value, decision, correlation_id.
+    key describing the outcome (e.g., "path_a", "path_c",
+    "route_to_team_x"). Logs: threshold, actual_value, decision,
+    correlation_id, and ``log_type="policy"`` — distinct from plain
+    service calls because routing/confidence decisions drive product
+    behaviour and deserve their own dashboard.
     """
 
     @functools.wraps(func)
@@ -38,6 +43,7 @@ def log_policy_decision(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
 
             log_kwargs: dict[str, Any] = {
+                "log_type": LOG_TYPE_POLICY,
                 "function": func_name,
                 "correlation_id": correlation_id,
                 "duration_ms": round(duration_ms, 2),
@@ -54,6 +60,7 @@ def log_policy_decision(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.exception(
                 "Policy decision failed",
+                log_type=LOG_TYPE_ERROR,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),
@@ -72,6 +79,7 @@ def log_policy_decision(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
 
             log_kwargs: dict[str, Any] = {
+                "log_type": LOG_TYPE_POLICY,
                 "function": func_name,
                 "correlation_id": correlation_id,
                 "duration_ms": round(duration_ms, 2),
@@ -88,6 +96,7 @@ def log_policy_decision(func: Callable) -> Callable:
             duration_ms = (time.perf_counter() - start) * 1000
             logger.exception(
                 "Policy decision failed",
+                log_type=LOG_TYPE_ERROR,
                 function=func_name,
                 correlation_id=correlation_id,
                 duration_ms=round(duration_ms, 2),

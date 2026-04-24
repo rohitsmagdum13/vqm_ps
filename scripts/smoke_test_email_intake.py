@@ -27,9 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Make src/ importable when running as a script
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -104,17 +105,32 @@ def make_graph_api_mock(raw_email: dict[str, Any]) -> AsyncMock:
 
 
 def make_postgres_mock(*, is_new: bool = True) -> AsyncMock:
-    """Postgres connector stub.
+    """Postgres connector stub with claim-check + transactional outbox.
 
-    ``check_idempotency`` controls the duplicate detection branch.
-    All other write methods are no-ops so storage steps succeed silently.
-    Thread correlator lookups return None → thread_status = 'NEW'.
+    - ``check_idempotency`` controls the claim branch (True = claimed,
+      False = duplicate/in-flight).
+    - ``transaction()`` yields a mocked asyncpg-like connection so
+      ``persist_email_atomically`` can ``async with`` it.
+    - ``execute`` / ``fetch`` / ``fetchrow`` return no-op defaults for
+      any non-transactional call sites.
     """
     mock = AsyncMock()
     mock.check_idempotency.return_value = is_new
     mock.execute.return_value = None
     mock.fetch.return_value = []
+    mock.fetch_unsent_outbox.return_value = []
     mock.fetchrow.return_value = None
+
+    tx_conn = AsyncMock()
+    tx_conn.execute.return_value = "INSERT 0 1"
+
+    @asynccontextmanager
+    async def _fake_transaction():
+        yield tx_conn
+
+    # MagicMock (not AsyncMock) so that calling .transaction() returns
+    # the async context manager itself, not a coroutine wrapping it.
+    mock.transaction = MagicMock(side_effect=_fake_transaction)
     return mock
 
 
@@ -272,13 +288,28 @@ async def scenario_happy_path() -> bool:
                 eventbridge.publish_event.await_count == 1,
             ),
             check(
-                "Idempotency key checked",
+                "Idempotency claim acquired",
                 postgres.check_idempotency.await_count == 1,
             ),
             check(
-                "PostgreSQL writes happened (email + case_execution)",
-                postgres.execute.await_count >= 2,
-                detail=f"execute calls: {postgres.execute.await_count}",
+                "Happy path finalized claim (mark_complete called)",
+                postgres.mark_idempotency_complete.await_count == 1,
+            ),
+            check(
+                "Release NOT called (no failure)",
+                postgres.release_idempotency_claim.await_count == 0,
+            ),
+            check(
+                "Atomic DB writes via transaction()",
+                postgres.transaction.call_count == 1,
+            ),
+            check(
+                "Outbox row enqueued inside the transaction",
+                postgres.enqueue_outbox.await_count == 1,
+            ),
+            check(
+                "Outbox row marked sent after successful SQS publish",
+                postgres.mark_outbox_sent.await_count == 1,
             ),
         ]
     )
@@ -473,6 +504,111 @@ async def scenario_relevance_filter_rejects() -> bool:
     )
 
 
+async def scenario_fetch_failure_releases_claim() -> bool:
+    """Graph API failure after claim → claim released so retry works."""
+    header("Scenario 6: Fetch failure releases the idempotency claim")
+
+    graph_api = AsyncMock()
+    graph_api.fetch_email.side_effect = RuntimeError("Graph 503")
+    postgres = make_postgres_mock(is_new=True)
+    s3 = make_s3_mock()
+    sqs = make_sqs_mock()
+    eventbridge = make_eventbridge_mock()
+    salesforce = make_salesforce_mock(match=build_vendor_match())
+    settings = build_test_settings()
+
+    service = build_service(
+        graph_api=graph_api,
+        postgres=postgres,
+        s3=s3,
+        sqs=sqs,
+        eventbridge=eventbridge,
+        salesforce=salesforce,
+        settings=settings,
+    )
+
+    raised = False
+    try:
+        await service.process_email(
+            SAMPLE_MESSAGE_ID, correlation_id="smoke-fetch-fail"
+        )
+    except RuntimeError:
+        raised = True
+
+    return all(
+        [
+            check("Pipeline raised the Graph error", raised),
+            check(
+                "Claim was released for retry",
+                postgres.release_idempotency_claim.await_count == 1,
+            ),
+            check(
+                "mark_idempotency_complete NOT called",
+                postgres.mark_idempotency_complete.await_count == 0,
+            ),
+            check(
+                "SQS was NOT called",
+                sqs.send_message.await_count == 0,
+            ),
+        ]
+    )
+
+
+async def scenario_sqs_failure_keeps_outbox() -> bool:
+    """SQS failure after DB commit → claim still completed, outbox has the row."""
+    header("Scenario 7: SQS failure is recoverable via outbox")
+
+    raw_email = build_graph_email()
+    graph_api = make_graph_api_mock(raw_email)
+    postgres = make_postgres_mock(is_new=True)
+    s3 = make_s3_mock()
+    sqs = make_sqs_mock()
+    sqs.send_message.side_effect = RuntimeError("SQS throttled")
+    eventbridge = make_eventbridge_mock()
+    salesforce = make_salesforce_mock(match=build_vendor_match())
+    settings = build_test_settings()
+
+    service = build_service(
+        graph_api=graph_api,
+        postgres=postgres,
+        s3=s3,
+        sqs=sqs,
+        eventbridge=eventbridge,
+        salesforce=salesforce,
+        settings=settings,
+    )
+
+    result = await service.process_email(
+        SAMPLE_MESSAGE_ID, correlation_id="smoke-sqs-fail"
+    )
+
+    return all(
+        [
+            check("Pipeline still returned a payload", result is not None),
+            check(
+                "Outbox enqueue happened (durable via DB txn)",
+                postgres.enqueue_outbox.await_count == 1,
+            ),
+            check(
+                "SQS failure recorded on outbox row",
+                postgres.record_outbox_failure.await_count == 1,
+            ),
+            check(
+                "Outbox row NOT marked sent (drainer will retry)",
+                postgres.mark_outbox_sent.await_count == 0,
+            ),
+            check(
+                "Claim still finalized COMPLETED",
+                postgres.mark_idempotency_complete.await_count == 1,
+            ),
+            check(
+                "Release NOT called (data is durable)",
+                postgres.release_idempotency_claim.await_count == 0,
+            ),
+        ]
+    )
+
+
 # ----------------------------------------------------------------------
 # Runner
 # ----------------------------------------------------------------------
@@ -485,6 +621,8 @@ async def main() -> int:
         ("Vendor unresolved + allowlist", scenario_vendor_unresolved_but_domain_allowed),
         ("Salesforce raises", scenario_salesforce_raises),
         ("Relevance filter rejects", scenario_relevance_filter_rejects),
+        ("Fetch failure releases claim", scenario_fetch_failure_releases_claim),
+        ("SQS failure recoverable via outbox", scenario_sqs_failure_keeps_outbox),
     ]
 
     header("EMAIL INTAKE SERVICE — OFFLINE SMOKE TEST")

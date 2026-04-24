@@ -28,6 +28,7 @@ from werkzeug.security import check_password_hash
 
 from cache.cache_client import auth_blacklist_key, exists_key, set_with_ttl
 from config.settings import get_settings
+from utils.log_types import LOG_TYPE_SECURITY
 from db.connection import PostgresConnector
 from models.auth import LoginResponse, TokenPayload
 from utils.decorators import log_service_call
@@ -125,6 +126,9 @@ async def authenticate_user(
     if user_row is None:
         logger.warning(
             "Login failed — user not found",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="login_failed",
+            reason="user_not_found",
             username_or_email=username_or_email,
             correlation_id=correlation_id,
         )
@@ -133,6 +137,9 @@ async def authenticate_user(
     if user_row["status"] != "ACTIVE":
         logger.warning(
             "Login failed — account inactive",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="login_failed",
+            reason="inactive_account",
             user_name=user_row["user_name"],
             status=user_row["status"],
             correlation_id=correlation_id,
@@ -147,6 +154,9 @@ async def authenticate_user(
     if not password_valid:
         logger.warning(
             "Login failed — invalid password",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="login_failed",
+            reason="bad_password",
             user_name=user_row["user_name"],
             correlation_id=correlation_id,
         )
@@ -165,6 +175,9 @@ async def authenticate_user(
     if role_row is None:
         logger.warning(
             "Login failed — no role assigned",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="login_failed",
+            reason="no_role",
             user_name=user_row["user_name"],
             correlation_id=correlation_id,
         )
@@ -186,6 +199,8 @@ async def authenticate_user(
 
     logger.info(
         "Login successful",
+        log_type=LOG_TYPE_SECURITY,
+        event_name="login_success",
         user_name=user_row["user_name"],
         role=role,
         tenant=tenant,
@@ -303,6 +318,8 @@ async def blacklist_token(
         await set_with_ttl(pg, key, "blacklisted", ttl)
         logger.info(
             "Token blacklisted",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="token_blacklisted",
             jti=jti,
             user_name=payload.get("sub"),
             correlation_id=correlation_id,
@@ -348,6 +365,8 @@ async def refresh_token_if_expiring(
 
     logger.info(
         "Token refreshed",
+        log_type=LOG_TYPE_SECURITY,
+        event_name="token_refreshed",
         user_name=payload.sub,
         old_jti=payload.jti,
         remaining_seconds=remaining,
