@@ -27,7 +27,10 @@ langchain-community                    # Community integrations (tools, retrieve
 langgraph>=0.2                         # Multi-agent state machine orchestration
 langsmith                              # LLM observability and tracing
 openai                                 # Dev flexibility — .env supports OpenAI as LLM provider
+langchain-openai                       # OpenAI ChatOpenAI binding for LangGraph agents
 langgraph-cli[inmem]
+langchain-mcp-adapters                 # Adapter to load MCP tools into LangGraph agents
+mcp                                    # Model Context Protocol client + FastMCP server
 
 # -----------------------------------------------------------
 # Database — PostgreSQL + pgvector
@@ -57,6 +60,7 @@ email-validator                        # Email address validation
 pdfplumber                             # PDF text extraction
 openpyxl                               # Excel file reading
 python-docx                            # Word document reading
+beautifulsoup4                         # HTML parsing (email body cleanup)
 
 # -----------------------------------------------------------
 # Observability & Logging
@@ -77,6 +81,7 @@ jinja2                                 # Prompt template rendering
 # -----------------------------------------------------------
 cryptography                           # Cryptographic primitives
 python-jose[cryptography]              # JWT token handling
+werkzeug                               # Password hashing (generate/check_password_hash)
 
 # -----------------------------------------------------------
 # Utilities
