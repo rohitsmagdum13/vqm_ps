@@ -59,12 +59,10 @@ async def lifespan(application: FastAPI):
 
     # --- Initialize Auth Service ---
     # Auth service needs the PostgresConnector to query tbl_users
-    # and manage JWT blacklist in cache.kv_store
-    if postgres is not None:
-        from services.auth import init_auth_service
-
-        init_auth_service(postgres)
-        logger.info("Auth service initialized")
+    # and manage JWT blacklist in cache.kv_store. The Salesforce
+    # connector is wired in below so init_auth_service can be called
+    # *after* the SF connector is constructed (the gate checks vendor
+    # registration before issuing the JWT).
 
     # --- Create Salesforce connector ---
     salesforce = None
@@ -80,6 +78,18 @@ async def lifespan(application: FastAPI):
             tool="salesforce",
         )
         application.state.salesforce = None
+
+    # Initialize the auth service now that both connectors are known.
+    # When salesforce is None (init failed), the login gate falls back
+    # to cache.vendor_cache for vendor verification.
+    if postgres is not None:
+        from services.auth import init_auth_service
+
+        init_auth_service(postgres, salesforce=salesforce)
+        logger.info(
+            "Auth service initialized",
+            salesforce_wired=salesforce is not None,
+        )
 
     # --- Create S3 connector ---
     try:
@@ -120,6 +130,21 @@ async def lifespan(application: FastAPI):
     except Exception:
         logger.warning("LLM Gateway init failed", tool="llm_gateway")
         application.state.llm_gateway = None
+
+    # --- Create Textract connector ---
+    # Optional — used by the portal attachment pipeline to OCR PDFs and
+    # images before falling back to pdfplumber. If office IAM lacks
+    # textract:DetectDocumentText the adapter still constructs cleanly;
+    # actual calls will fail with AccessDenied and the extractor falls
+    # through to pdfplumber.
+    try:
+        from adapters.textract import TextractConnector
+
+        application.state.textract = TextractConnector(settings)
+        logger.info("Textract connector ready", tool="textract")
+    except Exception:
+        logger.warning("Textract connector init failed", tool="textract")
+        application.state.textract = None
 
     # --- Create Graph API connector ---
     graph_api = None
@@ -173,16 +198,22 @@ async def lifespan(application: FastAPI):
         application.state.trail_service = None
 
     # --- Create Portal Intake Service ---
-    # Wires together postgres + sqs + eventbridge into the service
-    # that handles POST /queries from the vendor portal
+    # Wires postgres + sqs + eventbridge with the attachment pipeline
+    # connectors (s3, textract, llm_gateway). s3/llm_gateway/textract
+    # default to None upstream, so the service degrades gracefully when
+    # any of them is missing — attachments and/or entity extraction are
+    # then skipped instead of failing the submission.
     try:
-        from services.portal_submission import PortalIntakeService
+        from services.portal_intake import PortalIntakeService
 
         application.state.portal_intake = PortalIntakeService(
             postgres=application.state.postgres,
             sqs=application.state.sqs,
             eventbridge=application.state.eventbridge,
             settings=settings,
+            s3=application.state.s3,
+            llm_gateway=application.state.llm_gateway,
+            textract=application.state.textract,
         )
         logger.info("Portal Intake Service ready")
     except Exception:

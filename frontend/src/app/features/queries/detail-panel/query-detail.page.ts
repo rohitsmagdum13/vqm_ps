@@ -146,8 +146,8 @@ export class QueryDetailPage {
   protected readonly trail = computed(() => this.#store.trail());
   protected readonly sending = signal(false);
   protected readonly isAdmin = computed(() => this.#auth.role() === 'admin');
-  protected readonly backLink = computed(() =>
-    this.isAdmin() ? '/admin/queries' : '/queries',
+  protected readonly backLink = computed<string[]>(() =>
+    this.isAdmin() ? ['/admin/queries'] : this.#auth.vendorPath('queries'),
   );
   // The `<app-pipeline-timeline>` shows a "live" badge while polling.
   // Treat the query as in-flight unless it has reached a terminal state.

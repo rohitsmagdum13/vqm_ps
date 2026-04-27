@@ -105,11 +105,14 @@ export class QueriesPage {
   }
 
   protected goWizard(): void {
-    void this.#router.navigate(['/wizard']);
+    void this.#router.navigate(this.#auth.vendorPath('wizard'));
   }
 
   protected openDetail(id: string): void {
-    const base = this.#auth.role() === 'admin' ? '/admin/queries' : '/queries';
-    void this.#router.navigate([base, id]);
+    if (this.#auth.role() === 'admin') {
+      void this.#router.navigate(['/admin/queries', id]);
+      return;
+    }
+    void this.#router.navigate(this.#auth.vendorPath('queries', id));
   }
 }

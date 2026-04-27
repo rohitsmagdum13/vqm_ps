@@ -4,12 +4,18 @@ import { AuthService } from '../../auth/auth.service';
 import { UserMenu } from '../user-menu/user-menu';
 import type { NavItem } from '../../../shared/models/nav';
 
-const VENDOR_NAV: readonly NavItem[] = [
-  { id: 'portal', route: '/portal', lbl: 'My Portal', ico: '🏠', badge: null },
-  { id: 'wizard', route: '/wizard', lbl: 'New Query', ico: '✏️', badge: null },
-  { id: 'queries', route: '/queries', lbl: 'My Queries', ico: '📋', badge: '6' },
-  { id: 'prefs', route: '/preferences', lbl: 'Preferences', ico: '⚙️', badge: null },
-];
+/** Build the vendor nav items with the current vendor_id baked into
+ *  the routes. Called from a `computed` so the nav re-renders if the
+ *  user logs out and a different vendor logs back in. */
+function buildVendorNav(vendorId: string): readonly NavItem[] {
+  const base = `/${vendorId}`;
+  return [
+    { id: 'portal', route: `${base}/portal`, lbl: 'My Portal', ico: '🏠', badge: null },
+    { id: 'wizard', route: `${base}/wizard`, lbl: 'New Query', ico: '✏️', badge: null },
+    { id: 'queries', route: `${base}/queries`, lbl: 'My Queries', ico: '📋', badge: '6' },
+    { id: 'prefs', route: '/preferences', lbl: 'Preferences', ico: '⚙️', badge: null },
+  ];
+}
 
 const ADMIN_NAV: readonly NavItem[] = [
   { id: 'admin-dash', route: '/admin', lbl: 'Dashboard', ico: '📊', badge: null, exact: true },
@@ -65,7 +71,12 @@ const ADMIN_NAV: readonly NavItem[] = [
 export class TopNav {
   readonly #auth = inject(AuthService);
 
-  protected readonly items = computed<readonly NavItem[]>(() =>
-    this.#auth.role() === 'admin' ? ADMIN_NAV : VENDOR_NAV,
-  );
+  protected readonly items = computed<readonly NavItem[]>(() => {
+    if (this.#auth.role() === 'admin') return ADMIN_NAV;
+    const vid = this.#auth.vendorId();
+    // Defensive: if a vendor session has no vendor_id (shouldn't
+    // happen post-login gate), hide the nav rather than render
+    // broken links to `/undefined/portal`.
+    return vid ? buildVendorNav(vid) : [];
+  });
 }

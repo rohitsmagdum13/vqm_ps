@@ -6,7 +6,9 @@ import { QueriesStore } from '../../data/queries.store';
 import {
   QueryService,
   type BackendPriority,
+  type ExtractedEntities,
   type QuerySubmissionPayload,
+  type SubmittedAttachment,
 } from '../../data/query.service';
 import { ToastService } from '../../core/notifications/toast.service';
 import { toBackendQueryType } from '../../data/qtypes.data';
@@ -76,6 +78,7 @@ const PRIORITY_TO_BACKEND: Record<Priority, BackendPriority> = {
               [(desc)]="desc"
               [(priority)]="priority"
               [(ref)]="ref"
+              [(files)]="files"
               (changeType)="goToStep(1)"
             />
           }
@@ -92,6 +95,8 @@ const PRIORITY_TO_BACKEND: Record<Priority, BackendPriority> = {
           @case (5) {
             <app-wizard-success
               [queryId]="newId()"
+              [attachments]="submittedAttachments()"
+              [entities]="extractedEntities()"
               (track)="trackNew()"
               (newOne)="reset()"
               (done)="cancel()"
@@ -146,8 +151,11 @@ export class WizardPage {
   protected readonly desc = signal<string>('');
   protected readonly priority = signal<Priority>('Medium');
   protected readonly ref = signal<string>('');
+  protected readonly files = signal<readonly File[]>([]);
   protected readonly newId = signal<string>('');
   protected readonly submitting = signal<boolean>(false);
+  protected readonly submittedAttachments = signal<readonly SubmittedAttachment[]>([]);
+  protected readonly extractedEntities = signal<ExtractedEntities | null>(null);
   readonly #animationDone = signal<boolean>(false);
   readonly #submissionError = signal<string | null>(null);
 
@@ -157,6 +165,7 @@ export class WizardPage {
     desc: this.desc(),
     priority: this.priority(),
     ref: this.ref(),
+    files: this.files(),
   }));
 
   protected readonly canAdvance = computed(() => {
@@ -192,7 +201,7 @@ export class WizardPage {
 
   protected cancel(): void {
     this.resetDraft();
-    void this.#router.navigate(['/portal']);
+    void this.#router.navigate(this.#auth.vendorPath('portal'));
   }
 
   protected onAnimationDone(): void {
@@ -203,7 +212,7 @@ export class WizardPage {
   protected trackNew(): void {
     const id = this.newId();
     this.resetDraft();
-    void this.#router.navigate(['/queries', id]);
+    void this.#router.navigate(this.#auth.vendorPath('queries', id));
   }
 
   protected reset(): void {
@@ -228,14 +237,18 @@ export class WizardPage {
 
     this.submitting.set(true);
     this.newId.set('');
+    this.submittedAttachments.set([]);
+    this.extractedEntities.set(null);
     this.#animationDone.set(false);
     this.#submissionError.set(null);
     this.step.set(4);
 
-    this.#svc.submit(vendorId, payload).subscribe({
+    this.#svc.submit(vendorId, payload, this.files()).subscribe({
       next: (resp) => {
         this.submitting.set(false);
         this.newId.set(resp.query_id);
+        this.submittedAttachments.set(resp.attachments ?? []);
+        this.extractedEntities.set(resp.extracted_entities ?? null);
         this.#store.addFromServer({
           query_id: resp.query_id,
           subject: payload.subject,
@@ -290,7 +303,10 @@ export class WizardPage {
     this.desc.set('');
     this.priority.set('Medium');
     this.ref.set('');
+    this.files.set([]);
     this.newId.set('');
+    this.submittedAttachments.set([]);
+    this.extractedEntities.set(null);
     this.submitting.set(false);
     this.#animationDone.set(false);
     this.#submissionError.set(null);

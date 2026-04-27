@@ -27,6 +27,25 @@ interface ReviewRow {
         }
       </div>
 
+      @if (attachments().length > 0) {
+        <div
+          class="rounded-[var(--radius-md)] bg-surface-2 border border-border-light overflow-hidden"
+        >
+          <div class="px-4 py-2 text-[10px] font-mono tracking-wider uppercase text-fg-dim border-b border-border-light">
+            Attachments ({{ attachments().length }})
+          </div>
+          <ul class="divide-y divide-border-light">
+            @for (a of attachments(); track a.name + ':' + a.size) {
+              <li class="flex items-center gap-2 px-4 py-2 text-xs">
+                <span class="text-base" aria-hidden="true">📎</span>
+                <span class="text-fg flex-1 truncate" [title]="a.name">{{ a.name }}</span>
+                <span class="font-mono text-fg-dim">{{ sizeLabel(a.size) }}</span>
+              </li>
+            }
+          </ul>
+        </div>
+      }
+
       <div
         class="flex items-center gap-3 rounded-[var(--radius-md)] border border-success/20 bg-success/5 px-4 py-3"
       >
@@ -48,6 +67,7 @@ export class WizardStepReview {
   readonly #auth = inject(AuthService);
 
   protected readonly slaLabel = computed(() => SLA_BY_PRIORITY[this.draft().priority]);
+  protected readonly attachments = computed<readonly File[]>(() => this.draft().files);
 
   protected readonly rows = computed<readonly ReviewRow[]>(() => {
     const d = this.draft();
@@ -64,4 +84,10 @@ export class WizardStepReview {
       { k: 'Company', v: this.#auth.user().company },
     ];
   });
+
+  protected sizeLabel(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  }
 }

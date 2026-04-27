@@ -118,12 +118,22 @@ class TestSubmitQueryHappyPath:
     async def test_db_write_called(
         self, portal_service, valid_submission, mock_postgres
     ) -> None:
-        """Database execute is called for case_execution insert."""
+        """Database execute is called for the case_execution insert.
+
+        The full flow makes three writes — case_execution, portal_queries,
+        and the extracted_entities update — so we just check the
+        case_execution row is among them.
+        """
         await portal_service.submit_query(
             valid_submission, vendor_id="V-001"
         )
 
-        mock_postgres.execute.assert_called_once()
+        sql_statements = [
+            call.args[0] for call in mock_postgres.execute.call_args_list
+        ]
+        assert any(
+            "workflow.case_execution" in sql for sql in sql_statements
+        )
 
     async def test_eventbridge_event_published(
         self, portal_service, valid_submission, mock_eventbridge_connector

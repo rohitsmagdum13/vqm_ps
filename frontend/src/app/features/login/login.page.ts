@@ -171,7 +171,9 @@ export class LoginPage {
       next: () => {
         this.#stopTicker();
         this.loading.set(false);
-        void this.#router.navigate([role === 'admin' ? '/admin' : '/portal']);
+        // Vendors land on /<vendorId>/portal so the URL reflects their
+        // scope. Admin lands on the flat /admin dashboard.
+        void this.#router.navigate(this.#auth.homePath());
       },
       error: (err: unknown) => {
         this.#stopTicker();

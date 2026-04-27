@@ -86,6 +86,39 @@ export class AuthService {
     this.#session.set(next);
   }
 
+  /** Build a Router path that respects the role-based URL shape.
+   *
+   * Vendor pages live under `/:vendorId/...` so each query, wizard
+   * step, etc. is scoped to the logged-in vendor in the URL bar.
+   * Admin pages keep the flat `/admin/...` shape. This helper hides
+   * that branching from callers — they pass the segments after the
+   * vendor prefix and get a path Angular's Router can navigate to.
+   *
+   * Examples:
+   *   role=vendor, vendorId=V-001, path=['queries']  -> ['/', 'V-001', 'queries']
+   *   role=admin,                  path=['queries']  -> ['/', 'queries']
+   */
+  vendorPath(...segments: string[]): string[] {
+    const trimmed = segments.filter((s) => s !== '');
+    if (this.role() === 'vendor') {
+      const vid = this.vendorId();
+      if (vid) return ['/', vid, ...trimmed];
+    }
+    return ['/', ...trimmed];
+  }
+
+  /** Where to land the user after login or when they hit the root URL.
+   *
+   * Vendor → `/:vendorId/portal`; admin → `/admin`; signed-out fallback
+   * → `/login`. Returned as a string array ready for Router.navigate().
+   */
+  homePath(): string[] {
+    if (this.role() === 'admin') return ['/', 'admin'];
+    const vid = this.vendorId();
+    if (vid) return ['/', vid, 'portal'];
+    return ['/', 'login'];
+  }
+
   #toSession(dto: LoginResponseDto): AuthSession {
     return {
       token: dto.token,

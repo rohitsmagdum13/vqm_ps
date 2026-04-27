@@ -5,6 +5,10 @@ FastAPI routes for VQMS query submission and status lookup.
 Handles portal query submission (POST /queries) and query status
 lookup (GET /queries/{id}).
 
+POST /queries accepts multipart/form-data:
+    submission  (form field, JSON-encoded QuerySubmission)
+    files       (0..N file uploads — PDF, DOCX, XLSX, CSV, TXT, images)
+
 All routes access connectors via request.app.state — simple
 and explicit dependency injection for development mode.
 
@@ -15,8 +19,11 @@ Usage:
 
 from __future__ import annotations
 
+import json
+
 import structlog
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
+from pydantic import ValidationError
 
 from models.query import QuerySubmission
 from utils.decorators import log_api_call
@@ -114,7 +121,18 @@ async def list_queries(
 @log_api_call
 async def submit_query(
     request: Request,
-    submission: QuerySubmission,
+    submission: str = Form(
+        ...,
+        description=(
+            "JSON-encoded QuerySubmission: "
+            '{"query_type":"INVOICE_PAYMENT","subject":"...","description":"...",'
+            '"priority":"MEDIUM","reference_number":null}'
+        ),
+    ),
+    files: list[UploadFile] = File(
+        default=[],
+        description="Optional attachments (PDF, DOCX, XLSX, CSV, TXT, PNG, JPG). Up to 10 files, 50 MB total.",
+    ),
     x_vendor_id: str = Header(
         ...,
         description="Vendor ID (from JWT in production). Example: 001al00002Ie1zsAAB",
@@ -126,18 +144,17 @@ async def submit_query(
         alias="X-Correlation-ID",
     ),
 ) -> dict:
-    """Submit a vendor query from the portal.
+    """Submit a vendor query from the portal, with optional attachments.
 
-    **How to test in Swagger UI:**
-
-    1. Fill in `X-Vendor-ID` header (e.g., `001al00002Ie1zsAAB`)
-    2. Fill in the request body with query details
-    3. Click Execute
+    Accepts multipart/form-data:
+        submission  (form field, JSON-encoded QuerySubmission)
+        files       (0..N file uploads)
 
     Returns:
-    - **201**: `{"query_id": "VQ-2026-XXXX", "status": "RECEIVED"}`
-    - **409**: Duplicate submission (same vendor + subject + description)
-    - **422**: Validation error (subject too short, description too short, etc.)
+    - **201**: `{"query_id": "...", "status": "RECEIVED",
+                 "attachments": [...], "extracted_entities": {...}}`
+    - **409**: Duplicate submission
+    - **422**: Validation error
     """
     portal_intake = request.app.state.portal_intake
     if portal_intake is None:
@@ -146,9 +163,39 @@ async def submit_query(
             detail="Portal Intake Service unavailable — check PostgreSQL/SQS connection",
         )
 
+    # The wizard sends the structured fields as a single JSON form field
+    # so we keep one Pydantic model for validation and don't need a
+    # second flat-form schema.
+    try:
+        submission_data = json.loads(submission)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail=f"submission field is not valid JSON: {exc.msg}",
+        ) from exc
+
+    try:
+        submission_model = QuerySubmission(**submission_data)
+    except ValidationError as exc:
+        # Pydantic's errors() includes the original ValueError under
+        # ctx, which is not JSON serializable. Strip ctx and keep just
+        # what the client needs to fix their submission.
+        safe_errors = [
+            {k: v for k, v in err.items() if k != "ctx"} for err in exc.errors()
+        ]
+        raise HTTPException(status_code=422, detail=safe_errors) from exc
+
+    # FastAPI passes an empty UploadFile when no files are sent and
+    # default=[] is used; filter out anything without a filename so the
+    # processor doesn't see phantom uploads.
+    real_files = [f for f in files if f and f.filename]
+
     try:
         payload = await portal_intake.submit_query(
-            submission, x_vendor_id, correlation_id=x_correlation_id
+            submission_model,
+            x_vendor_id,
+            files=real_files,
+            correlation_id=x_correlation_id,
         )
     except DuplicateQueryError as exc:
         raise HTTPException(
@@ -160,6 +207,17 @@ async def submit_query(
         "query_id": payload.query_id,
         "status": "RECEIVED",
         "created_at": str(payload.received_at),
+        "attachments": [
+            {
+                "attachment_id": a.attachment_id,
+                "filename": a.filename,
+                "size_bytes": a.size_bytes,
+                "extraction_status": a.extraction_status,
+                "extraction_method": a.extraction_method,
+            }
+            for a in payload.attachments
+        ],
+        "extracted_entities": payload.metadata.get("extracted_entities", {}),
     }
 
 

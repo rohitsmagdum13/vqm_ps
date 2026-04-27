@@ -39,16 +39,46 @@ logger = structlog.get_logger(__name__)
 # by init_auth_service(). This avoids passing the connector through
 # every function call while keeping the dependency explicit.
 _pg: PostgresConnector | None = None
+# Optional SalesforceConnector — when set, the login flow verifies the
+# user's vendor_id is registered in Salesforce before issuing a JWT.
+# Tests that don't exercise Salesforce can omit it.
+_sf: object | None = None  # SalesforceConnector
 
 # Dev-mode mapping from seeded username to vendor_id. tbl_users does not
 # store a vendor_id column yet — this dict is the bridge so the portal
 # can filter GET /queries by the caller's vendor. Replace with a DB
 # column or a Salesforce contact lookup in production.
+#
+# IDs match scripts/seed_admin_user.py and the Salesforce sf_accounts
+# CSV (V-001 through V-025). All non-admin users authenticate with
+# password 'vendor_user123' (admin uses 'admin123').
 USER_TO_VENDOR_ID: dict[str, str] = {
     "sneha.singh": "V-001",
     "dinesh.chauhan": "V-002",
     "deepak.reddy": "V-003",
     "vendor_user": "V-001",
+    "priya.menon": "V-004",
+    "arjun.iyer": "V-005",
+    "kavya.patel": "V-006",
+    "manish.sharma": "V-007",
+    "ananya.gupta": "V-008",
+    "vikram.rao": "V-009",
+    "ritu.kapoor": "V-010",
+    "rahul.verma": "V-011",
+    "meera.nair": "V-012",
+    "siddharth.joshi": "V-013",
+    "neha.bhatt": "V-014",
+    "arvind.krishnan": "V-015",
+    "divya.desai": "V-016",
+    "karthik.subramanian": "V-017",
+    "pooja.malhotra": "V-018",
+    "rajesh.shah": "V-019",
+    "swati.dixit": "V-020",
+    "amit.bose": "V-021",
+    "shreya.pillai": "V-022",
+    "naveen.menon": "V-023",
+    "simran.kaur": "V-024",
+    "varun.choudhary": "V-025",
 }
 
 
@@ -59,13 +89,23 @@ def resolve_vendor_id(user_name: str, role: str) -> str | None:
     return USER_TO_VENDOR_ID.get(user_name)
 
 
-def init_auth_service(pg: PostgresConnector) -> None:
-    """Initialize the auth service with a PostgresConnector.
+def init_auth_service(
+    pg: PostgresConnector,
+    salesforce: object | None = None,  # SalesforceConnector
+) -> None:
+    """Initialize the auth service with the connectors it needs.
 
-    Called once during app startup (in main.py lifespan).
+    The SalesforceConnector is optional — when provided, the login
+    flow verifies a vendor user's vendor_id is registered in Salesforce
+    before issuing a JWT. When omitted, the gate degrades to a
+    cache.vendor_cache lookup only (used by tests that don't exercise
+    Salesforce).
+
+    Called once during app startup (in app.lifespan).
     """
-    global _pg
+    global _pg, _sf
     _pg = pg
+    _sf = salesforce
 
 
 def _get_pg() -> PostgresConnector:
@@ -185,6 +225,20 @@ async def authenticate_user(
 
     role = role_row["role"]
     tenant = role_row["tenant"] or user_row["tenant"]
+
+    # Vendor registration gate — VENDOR users must map to a known
+    # vendor_id AND that vendor must exist in our system of record
+    # (Salesforce, with cache.vendor_cache as a fallback when SF is
+    # unreachable). Admins / reviewers bypass this gate because they
+    # don't have a vendor identity.
+    vendor_id = resolve_vendor_id(user_row["user_name"], role)
+    if role == "VENDOR":
+        await _ensure_vendor_registered(
+            user_name=user_row["user_name"],
+            vendor_id=vendor_id,
+            correlation_id=correlation_id,
+        )
+
     # Compose full_name from role row. Either part may be NULL in the
     # DB for legacy rows, so strip whitespace to avoid leading/trailing
     # spaces. If both parts are empty, fall back to None (Pydantic default).
@@ -214,8 +268,158 @@ async def authenticate_user(
         email=user_row["email_id"],
         role=role,
         tenant=tenant,
-        vendor_id=resolve_vendor_id(user_row["user_name"], role),
+        vendor_id=vendor_id,
     )
+
+
+async def _ensure_vendor_registered(
+    *,
+    user_name: str,
+    vendor_id: str | None,
+    correlation_id: str | None,
+) -> None:
+    """Reject login if the user has no vendor mapping or the vendor
+    cannot be found in Salesforce or the local vendor cache.
+
+    Order of checks:
+        1. vendor_id resolved? — else reject ("User has no vendor mapping")
+        2. SalesforceConnector wired? — query find_vendor_by_id
+            * found  → warm cache.vendor_cache and return
+            * not found → reject ("Vendor account not registered")
+        3. Salesforce errored or wasn't wired → fall back to
+           cache.vendor_cache (last-known-good)
+            * cached entry present → return (degraded mode, logged)
+            * else → reject
+
+    Raises:
+        AuthenticationError: When the vendor cannot be confirmed.
+    """
+    if vendor_id is None:
+        logger.warning(
+            "Login rejected — user has no vendor mapping",
+            log_type=LOG_TYPE_SECURITY,
+            event_name="login_failed",
+            reason="no_vendor_mapping",
+            user_name=user_name,
+            correlation_id=correlation_id,
+        )
+        raise AuthenticationError("User has no vendor mapping")
+
+    pg = _get_pg()
+
+    # 1. Try Salesforce when wired.
+    sf_lookup_failed = False
+    if _sf is not None:
+        try:
+            sf_record = await _sf.find_vendor_by_id(  # type: ignore[attr-defined]
+                vendor_id, correlation_id=correlation_id or ""
+            )
+        except Exception:
+            logger.warning(
+                "Salesforce lookup raised during login — falling back to cache",
+                tool="salesforce",
+                vendor_id=vendor_id,
+                correlation_id=correlation_id,
+            )
+            sf_record = None
+            sf_lookup_failed = True
+
+        if sf_record is not None:
+            await _warm_vendor_cache(pg, vendor_id, sf_record, correlation_id)
+            return
+
+        if not sf_lookup_failed:
+            # SF returned cleanly with no record — vendor is genuinely
+            # not registered. Don't fall back to a stale cache entry.
+            logger.warning(
+                "Login rejected — vendor not registered in Salesforce",
+                log_type=LOG_TYPE_SECURITY,
+                event_name="login_failed",
+                reason="vendor_not_registered",
+                user_name=user_name,
+                vendor_id=vendor_id,
+                correlation_id=correlation_id,
+            )
+            raise AuthenticationError("Vendor account not registered")
+
+    # 2. Salesforce unavailable (no connector or it errored) — degraded
+    # mode: trust cache.vendor_cache if it has the row.
+    try:
+        cached = await pg.cache_read("cache.vendor_cache", "vendor_id", vendor_id)
+    except Exception:
+        cached = None
+
+    if cached:
+        logger.warning(
+            "Login allowed via cache fallback (Salesforce unreachable)",
+            tool="postgresql",
+            vendor_id=vendor_id,
+            user_name=user_name,
+            correlation_id=correlation_id,
+        )
+        return
+
+    logger.warning(
+        "Login rejected — vendor not registered (no SF, no cache)",
+        log_type=LOG_TYPE_SECURITY,
+        event_name="login_failed",
+        reason="vendor_not_registered",
+        user_name=user_name,
+        vendor_id=vendor_id,
+        correlation_id=correlation_id,
+    )
+    raise AuthenticationError("Vendor account not registered")
+
+
+async def _warm_vendor_cache(
+    pg: PostgresConnector,
+    vendor_id: str,
+    sf_record: dict,
+    correlation_id: str | None,
+) -> None:
+    """Best-effort write of the SF record into cache.vendor_cache.
+
+    Lets the AI pipeline's context_loading skip the Salesforce hit on
+    the next query for this vendor. Failure here must not break login.
+    """
+    import json
+    from datetime import timedelta
+
+    from utils.helpers import TimeHelper
+
+    payload = {
+        "vendor_id": vendor_id,
+        "vendor_name": sf_record.get("Name", "Unknown"),
+        "tier": {
+            "tier_name": sf_record.get("Vendor_Tier__c") or "BRONZE",
+            "sla_hours": 24,
+            "priority_multiplier": 1.0,
+        },
+        "primary_contact_email": sf_record.get("Email") or "",
+        "is_active": True,
+    }
+    expires_at = TimeHelper.ist_now() + timedelta(hours=1)
+
+    try:
+        await pg.execute(
+            """
+            INSERT INTO cache.vendor_cache (vendor_id, cache_data, expires_at)
+            VALUES ($1, $2::jsonb, $3)
+            ON CONFLICT (vendor_id) DO UPDATE SET
+                cache_data = EXCLUDED.cache_data,
+                cached_at = NOW(),
+                expires_at = EXCLUDED.expires_at
+            """,
+            vendor_id,
+            json.dumps(payload),
+            expires_at,
+        )
+    except Exception:
+        logger.debug(
+            "Vendor cache warm failed — non-critical",
+            vendor_id=vendor_id,
+            correlation_id=correlation_id,
+        )
 
 
 def create_access_token(

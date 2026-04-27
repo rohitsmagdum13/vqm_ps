@@ -6,6 +6,10 @@ QuerySubmission is the input from the vendor portal wizard.
 UnifiedQueryPayload is the normalized format that both email
 and portal paths produce before entering the AI pipeline.
 
+QueryAttachment models a portal-uploaded file (mirrors EmailAttachment).
+ExtractedEntities is the structured JSON output of the entity-extraction
+LLM call performed during portal intake.
+
 QUERY_TYPES defines the 12 official query categories used across
 the entire VQMS system (portal, routing, KB search, analytics).
 """
@@ -116,12 +120,89 @@ class QuerySubmission(BaseModel):
         return v
 
 
+class QueryAttachment(BaseModel):
+    """A single file attachment uploaded with a portal query.
+
+    Mirrors EmailAttachment but carries portal-specific extras:
+    extraction_method records which extractor produced the text
+    (textract / pdfplumber / openpyxl / docx / decode / none),
+    so downstream consumers and the admin UI can tell apart
+    OCR-derived text from native parsers.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    attachment_id: str = Field(description="Stable ID for the attachment within a query (ATT-001 ...)")
+    filename: str = Field(description="Original filename from the upload")
+    content_type: str = Field(description="MIME type")
+    size_bytes: int = Field(description="File size in bytes")
+    s3_key: str | None = Field(default=None, description="S3 object key under attachments/{query_id}/")
+    extracted_text: str | None = Field(
+        default=None,
+        description="Text extracted from the file (max 5000 chars)",
+    )
+    extraction_status: Literal["pending", "success", "failed", "skipped"] = Field(
+        default="pending",
+        description="Outcome of text extraction",
+    )
+    extraction_method: Literal[
+        "textract", "pdfplumber", "openpyxl", "python_docx", "decode", "none"
+    ] = Field(
+        default="none",
+        description="Which extractor produced the text",
+    )
+
+
+class AmountEntity(BaseModel):
+    """A monetary amount with currency, parsed from query text or attachments."""
+
+    model_config = ConfigDict(frozen=True)
+
+    value: float = Field(description="Numeric amount")
+    currency: str = Field(description="ISO-4217 currency code (e.g. INR, USD)")
+
+
+class ExtractedEntities(BaseModel):
+    """Structured entities extracted by the entity-extraction LLM call.
+
+    All fields default to empty so a parse failure can return an
+    'empty' instance and the pipeline keeps moving. Lists are used
+    even for typically-single fields so the model never has to make
+    an arbitrary "which one wins" choice.
+
+    The schema is the contract the prompt is pinned to — keep this
+    model and the prompt in sync.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    invoice_numbers: list[str] = Field(default_factory=list)
+    po_numbers: list[str] = Field(default_factory=list)
+    amounts: list[AmountEntity] = Field(default_factory=list)
+    dates: list[str] = Field(
+        default_factory=list,
+        description="Calendar dates in YYYY-MM-DD format",
+    )
+    vendor_names: list[str] = Field(default_factory=list)
+    product_skus: list[str] = Field(default_factory=list)
+    contract_ids: list[str] = Field(default_factory=list)
+    ticket_numbers: list[str] = Field(default_factory=list)
+    emails: list[str] = Field(default_factory=list)
+    phone_numbers: list[str] = Field(default_factory=list)
+    summary: str = Field(default="", description="One-sentence summary of the query")
+
+
 class UnifiedQueryPayload(BaseModel):
     """Normalized query payload consumed by the AI pipeline.
 
     Both the email path and portal path produce this model
     before enqueueing to SQS. The LangGraph orchestrator
     reads this as the starting input.
+
+    Email path uses ``EmailAttachment`` items inside ``attachments``;
+    portal path uses ``QueryAttachment`` items. The pipeline only
+    reads common fields (filename, s3_key, extracted_text), so the
+    union is safe.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -138,9 +219,9 @@ class UnifiedQueryPayload(BaseModel):
         description="Priority level",
     )
     received_at: datetime = Field(description="When the query was first received (IST)")
-    attachments: list[EmailAttachment] = Field(
+    attachments: list[EmailAttachment | QueryAttachment] = Field(
         default_factory=list,
-        description="Attachments (email path only; empty for portal)",
+        description="Attachments — EmailAttachment for email path, QueryAttachment for portal path",
     )
     thread_status: Literal["NEW", "EXISTING_OPEN", "REPLY_TO_CLOSED"] = Field(
         default="NEW",
@@ -148,5 +229,8 @@ class UnifiedQueryPayload(BaseModel):
     )
     metadata: dict = Field(
         default_factory=dict,
-        description="Additional context (email headers, portal form fields, etc.)",
+        description=(
+            "Additional context (email headers, portal form fields, "
+            "extracted_entities for portal path, etc.)"
+        ),
     )

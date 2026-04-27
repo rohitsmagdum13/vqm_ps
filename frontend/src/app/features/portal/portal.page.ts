@@ -78,8 +78,10 @@ export class PortalPage {
   });
   protected readonly resolvedCount = computed(() => this.#store.stats().resolved);
 
-  protected goWizard(): void { void this.#router.navigate(['/wizard']); }
-  protected goQueries(): void { void this.#router.navigate(['/queries']); }
+  protected goWizard(): void { void this.#router.navigate(this.#auth.vendorPath('wizard')); }
+  protected goQueries(): void { void this.#router.navigate(this.#auth.vendorPath('queries')); }
   protected goPrefs(): void { void this.#router.navigate(['/preferences']); }
-  protected openQuery(id: string): void { void this.#router.navigate(['/queries', id]); }
+  protected openQuery(id: string): void {
+    void this.#router.navigate(this.#auth.vendorPath('queries', id));
+  }
 }

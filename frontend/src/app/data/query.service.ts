@@ -28,10 +28,49 @@ export interface QuerySubmissionPayload {
   readonly reference_number?: string | null;
 }
 
+export type ExtractionStatus = 'pending' | 'success' | 'failed' | 'skipped';
+
+export type ExtractionMethod =
+  | 'textract'
+  | 'pdfplumber'
+  | 'openpyxl'
+  | 'python_docx'
+  | 'decode'
+  | 'none';
+
+export interface SubmittedAttachment {
+  readonly attachment_id: string;
+  readonly filename: string;
+  readonly size_bytes: number;
+  readonly extraction_status: ExtractionStatus;
+  readonly extraction_method: ExtractionMethod;
+}
+
+export interface ExtractedAmount {
+  readonly value: number;
+  readonly currency: string;
+}
+
+export interface ExtractedEntities {
+  readonly invoice_numbers: readonly string[];
+  readonly po_numbers: readonly string[];
+  readonly amounts: readonly ExtractedAmount[];
+  readonly dates: readonly string[];
+  readonly vendor_names: readonly string[];
+  readonly product_skus: readonly string[];
+  readonly contract_ids: readonly string[];
+  readonly ticket_numbers: readonly string[];
+  readonly emails: readonly string[];
+  readonly phone_numbers: readonly string[];
+  readonly summary: string;
+}
+
 export interface QuerySubmissionResult {
   readonly query_id: string;
   readonly status: string;
   readonly created_at: string;
+  readonly attachments?: readonly SubmittedAttachment[];
+  readonly extracted_entities?: ExtractedEntities;
 }
 
 export interface QueryListItem {
@@ -80,8 +119,19 @@ export class QueryService {
   submit(
     vendorId: string,
     payload: QuerySubmissionPayload,
+    files: readonly File[] = [],
   ): Observable<QuerySubmissionResult> {
-    return this.#http.post<QuerySubmissionResult>(this.#base, payload, {
+    // Backend now accepts multipart/form-data with the structured fields
+    // packed into a single `submission` JSON form field plus 0..N file
+    // parts under the name `files`. We always send multipart so the
+    // request shape stays consistent whether the user attaches files
+    // or not.
+    const form = new FormData();
+    form.append('submission', JSON.stringify(payload));
+    for (const f of files) {
+      form.append('files', f, f.name);
+    }
+    return this.#http.post<QuerySubmissionResult>(this.#base, form, {
       headers: vendorHeader(vendorId),
     });
   }
