@@ -245,6 +245,7 @@ export class WizardPage {
           source: 'portal',
           processing_path: null,
           reference_number: payload.reference_number ?? null,
+          vendor_id: vendorId,
           sla_deadline: null,
           created_at: resp.created_at,
           updated_at: resp.created_at,

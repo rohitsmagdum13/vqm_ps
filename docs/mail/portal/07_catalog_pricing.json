@@ -1,0 +1,29 @@
+{
+  "query_type": "CATALOG_PRICING",
+  "kb_article": "KB-003",
+  "team": "procurement",
+  "samples": [
+    {
+      "label": "Path A — catalog item rate query",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "CATALOG_PRICING",
+        "subject": "Confirm current rate for SKU INV-CT-449 (cold-rolled steel sheet 3mm)",
+        "description": "Hi Procurement, could you confirm the latest contracted rate for SKU INV-CT-449 (cold-rolled steel sheet 3 mm, 1500x3000)? Our last PO had it at INR 8,400 / unit but the price-list refresh on 2026-04-01 should have updated it. Please share the current valid rate sheet.",
+        "priority": "MEDIUM",
+        "reference_number": "INV-CT-449"
+      }
+    },
+    {
+      "label": "Path B — bulk-discount request (negotiation, not policy)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "CATALOG_PRICING",
+        "subject": "Volume-discount tier for orders above 5000 units / quarter",
+        "description": "We are considering committing to 5000+ units per quarter on SKU INV-CT-449 for the next two quarters. Is there a volume-tier discount available beyond the current rate card, and who from your team would lead the commercial negotiation? Happy to share our forecast.",
+        "priority": "MEDIUM",
+        "reference_number": null
+      }
+    }
+  ]
+}

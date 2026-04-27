@@ -2,9 +2,9 @@
 
 Email fetching operations via Microsoft Graph API.
 
-Handles fetching individual emails by message ID and listing
-unread messages for reconciliation polling. Used by the Email
-Intake Service (Steps E1-E2) and the polling service.
+Handles fetching individual emails by message ID, listing unread
+messages, and the delta-query reconciliation pattern. Used by the
+Email Intake Service (Steps E1-E2) and the polling service.
 """
 
 from __future__ import annotations
@@ -122,6 +122,83 @@ class EmailFetchMixin:
         )
         data = response.json()
         return data.get("value", [])
+
+    @log_service_call
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception(_is_retryable),
+        reraise=True,
+    )
+    async def delta_query(
+        self,
+        *,
+        delta_link: str | None = None,
+        top: int = 50,
+        correlation_id: str = "",
+    ) -> dict:
+        """Run a Graph delta query against the mailbox Inbox folder.
+
+        The delta endpoint returns only what has changed since the
+        last call. The first call (no delta_link) walks the current
+        state and returns an ``@odata.deltaLink`` we persist; every
+        following call uses that link and gets only new/changed mail.
+
+        Reference: docs.microsoft.com/graph/api/message-delta
+
+        Args:
+            delta_link: The full ``@odata.deltaLink`` URL from the
+                previous poll. Pass None on the very first call to
+                start a new delta sequence.
+            top: Page size hint for Graph (max 50 for delta).
+            correlation_id: Tracing ID.
+
+        Returns:
+            Dict with three keys:
+              - "messages":   list of message dicts (id, subject,
+                              from, receivedDateTime, conversationId,
+                              isRead, ...).
+              - "delta_link": Updated ``@odata.deltaLink`` to use on
+                              the next call. None if Graph returned
+                              an ``@odata.nextLink`` instead — caller
+                              should keep paging.
+              - "next_link":  Next-page link for cases where the delta
+                              spans multiple pages.
+
+        Raises:
+            GraphAPIError: On non-2xx responses (retries 429/500/502/503).
+        """
+        if delta_link:
+            # Subsequent call — use the persisted link verbatim.
+            url = delta_link
+            params: dict | None = None
+        else:
+            # First call — start a new delta sequence on Inbox only.
+            url = (
+                f"{GRAPH_BASE_URL}/users/{self._mailbox}"
+                "/mailFolders/Inbox/messages/delta"
+            )
+            params = {
+                "$top": str(top),
+                "$select": (
+                    "id,subject,from,receivedDateTime,"
+                    "conversationId,isRead"
+                ),
+            }
+
+        response = await self._request(
+            "GET",
+            url,
+            params=params,
+            correlation_id=correlation_id,
+        )
+        data = response.json()
+
+        return {
+            "messages": data.get("value", []),
+            "delta_link": data.get("@odata.deltaLink"),
+            "next_link": data.get("@odata.nextLink"),
+        }
 
     @log_service_call
     @retry(

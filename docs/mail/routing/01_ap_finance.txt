@@ -1,0 +1,23 @@
+Subject: Invoice payment overdue - INV-DF-2026-0451 (₹3,20,000)
+
+Dear Accounts Payable Team,
+
+The below invoice has crossed its due date by 45 days. Could you please share the payment status and expected disbursement date?
+
+• Invoice Number: INV-DF-2026-0451
+• Invoice Date: 08 February 2026
+• Due Date: 10 March 2026 (Net-30)
+• Outstanding Amount: ₹3,20,000.00
+• PO Reference: PO-2026-0210
+• Vendor Code: V-002
+
+This is the second follow-up — first was sent on 25 March 2026.
+
+Best regards,
+Anil Verma
+Delta Foods
+anil.verma@deltafoods.com
++91-9012345678
+
+---
+Expected routing: AP-FINANCE

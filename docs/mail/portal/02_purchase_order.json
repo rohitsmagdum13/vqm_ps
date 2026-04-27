@@ -1,0 +1,29 @@
+{
+  "query_type": "PURCHASE_ORDER",
+  "kb_article": "KB-005",
+  "team": "procurement",
+  "samples": [
+    {
+      "label": "Path A — PO amendment process question",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "PURCHASE_ORDER",
+        "subject": "How do I request a quantity amendment on PO-2026-892?",
+        "description": "Hi Procurement, we need to reduce the quantity on PO-2026-892 from 500 units to 480 units of cold-rolled steel sheets. What is the formal amendment workflow on the VQMS portal, and how long is the approval typically taking these days?",
+        "priority": "MEDIUM",
+        "reference_number": "PO-2026-892"
+      }
+    },
+    {
+      "label": "Path C — frustrated, low-confidence (likely triage)",
+      "expected_path": "C",
+      "submission": {
+        "query_type": "PURCHASE_ORDER",
+        "subject": "PO situation",
+        "description": "Hello — there is something going on with our POs and we are not happy. We need someone to look at this urgently. Things are not working and we cannot continue this way. Please escalate.",
+        "priority": "CRITICAL",
+        "reference_number": null
+      }
+    }
+  ]
+}

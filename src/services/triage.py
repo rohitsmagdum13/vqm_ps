@@ -111,10 +111,13 @@ class TriageService:
         """
         safe_limit = max(1, min(limit, 200))
 
+        # Pull package_data alongside the summary columns so we can surface
+        # subject / vendor_id / ai_intent without a per-row /triage/{id} hit
+        # from the queue page.
         rows = await self._postgres.fetch(
             """
             SELECT query_id, correlation_id, original_confidence,
-                   suggested_category, status, created_at
+                   suggested_category, status, created_at, package_data
             FROM workflow.triage_packages
             WHERE status = $1
             ORDER BY created_at ASC
@@ -124,17 +127,32 @@ class TriageService:
             safe_limit,
         )
 
-        items = [
-            TriageQueueItem(
-                query_id=row["query_id"],
-                correlation_id=row["correlation_id"],
-                original_confidence=float(row["original_confidence"]),
-                suggested_category=row.get("suggested_category"),
-                status=row["status"],
-                created_at=row["created_at"],
+        items: list[TriageQueueItem] = []
+        for row in rows:
+            # package_data is JSONB. We only read it — failure to decode
+            # shouldn't kill the whole list response, so swallow per-row
+            # errors and surface the row with display fields blank.
+            try:
+                package_data = self._decode_jsonb(row.get("package_data"))
+            except Exception:
+                package_data = {}
+
+            original_query = package_data.get("original_query") or {}
+            analysis_result = package_data.get("analysis_result") or {}
+
+            items.append(
+                TriageQueueItem(
+                    query_id=row["query_id"],
+                    correlation_id=row["correlation_id"],
+                    original_confidence=float(row["original_confidence"]),
+                    suggested_category=row.get("suggested_category"),
+                    status=row["status"],
+                    created_at=row["created_at"],
+                    subject=original_query.get("subject"),
+                    vendor_id=original_query.get("vendor_id"),
+                    ai_intent=analysis_result.get("intent_classification"),
+                )
             )
-            for row in rows
-        ]
 
         logger.info(
             "Triage queue listed",

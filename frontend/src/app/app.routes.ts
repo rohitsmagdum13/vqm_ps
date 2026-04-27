@@ -34,11 +34,75 @@ export const routes: Routes = [
           ),
       },
       {
+        path: 'admin/queries',
+        canActivate: [adminOnly],
+        loadComponent: () => import('./features/queries/queries.page').then((m) => m.QueriesPage),
+      },
+      {
+        path: 'admin/queries/:id',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/queries/detail-panel/query-detail.page').then(
+            (m) => m.QueryDetailPage,
+          ),
+      },
+      {
+        path: 'admin/email',
+        canActivate: [adminOnly],
+        loadComponent: () => import('./features/email/email.page').then((m) => m.EmailPage),
+      },
+      {
+        path: 'admin/triage',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-triage/admin-triage.page').then((m) => m.AdminTriagePage),
+      },
+      {
+        path: 'admin/triage/:id',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-triage/triage-detail.page').then((m) => m.TriageDetailPage),
+      },
+      {
+        path: 'admin/path-b',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-path-b/admin-path-b.page').then((m) => m.AdminPathBPage),
+      },
+      {
+        path: 'admin/path-b/:id',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-path-b/investigation-detail.page').then(
+            (m) => m.InvestigationDetailPage,
+          ),
+      },
+      {
+        path: 'admin/draft-approvals',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-drafts/admin-drafts.page').then((m) => m.AdminDraftsPage),
+      },
+      {
+        path: 'admin/draft-approvals/:id',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-drafts/draft-detail.page').then((m) => m.DraftDetailPage),
+      },
+      {
+        path: 'admin/ops',
+        canActivate: [adminOnly],
+        loadComponent: () =>
+          import('./features/admin-ops/admin-ops.page').then((m) => m.AdminOpsPage),
+      },
+      {
         path: 'queries',
+        canActivate: [vendorOnly],
         loadComponent: () => import('./features/queries/queries.page').then((m) => m.QueriesPage),
       },
       {
         path: 'queries/:id',
+        canActivate: [vendorOnly],
         loadComponent: () =>
           import('./features/queries/detail-panel/query-detail.page').then(
             (m) => m.QueryDetailPage,
@@ -48,11 +112,6 @@ export const routes: Routes = [
         path: 'wizard',
         canActivate: [vendorOnly],
         loadComponent: () => import('./features/wizard/wizard.page').then((m) => m.WizardPage),
-      },
-      {
-        path: 'email',
-        canActivate: [adminOnly],
-        loadComponent: () => import('./features/email/email.page').then((m) => m.EmailPage),
       },
       {
         path: 'preferences',

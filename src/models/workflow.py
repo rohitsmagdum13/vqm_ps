@@ -116,8 +116,14 @@ class PipelineState(TypedDict, total=False):
     # graph entry-switch into the resolution-from-notes branch.
     resume_context: dict | None
 
+    # Follow-up info merged in from a later reply on the same thread.
+    # Populated by ClosureService.handle_followup_info on the prior case.
+    # context_loading reads this and surfaces it to Query Analysis so the
+    # late attachment / clarification is folded into the current run.
+    additional_context: list[dict]
+
     # Pipeline status tracking
-    status: str  # RECEIVED, ANALYZING, ROUTING, DRAFTING, VALIDATING, DELIVERING, RESOLVED, PAUSED, FAILED
+    status: str  # RECEIVED, ANALYZING, ROUTING, DRAFTING, VALIDATING, DELIVERING, RESOLVED, PAUSED, FAILED, MERGED_INTO_PARENT
     error: str | None
 
     # Timestamps (IST, ISO format strings)

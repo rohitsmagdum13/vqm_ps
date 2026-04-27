@@ -2,6 +2,7 @@ import { HttpClient, HttpHeaders } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
+import type { TimelineEvent } from '../shared/models/timeline';
 
 export type BackendPriority = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
 
@@ -42,6 +43,7 @@ export interface QueryListItem {
   readonly source: string;
   readonly processing_path: string | null;
   readonly reference_number: string | null;
+  readonly vendor_id: string | null;
   readonly sla_deadline: string | null;
   readonly created_at: string;
   readonly updated_at: string;
@@ -56,7 +58,12 @@ export interface QueryListResponse {
   readonly queries: readonly QueryListItem[];
 }
 
-function vendorHeader(vendorId: string): HttpHeaders {
+export interface QueryTrailResponse {
+  readonly events: readonly TimelineEvent[];
+}
+
+function vendorHeader(vendorId: string | null): HttpHeaders | undefined {
+  if (!vendorId) return undefined;
   return new HttpHeaders({ 'X-Vendor-ID': vendorId });
 }
 
@@ -65,10 +72,9 @@ export class QueryService {
   readonly #http = inject(HttpClient);
   readonly #base = `${environment.apiBaseUrl}/queries`;
 
-  list(vendorId: string): Observable<QueryListResponse> {
-    return this.#http.get<QueryListResponse>(this.#base, {
-      headers: vendorHeader(vendorId),
-    });
+  list(vendorId: string | null): Observable<QueryListResponse> {
+    const headers = vendorHeader(vendorId);
+    return this.#http.get<QueryListResponse>(this.#base, headers ? { headers } : {});
   }
 
   submit(
@@ -80,10 +86,19 @@ export class QueryService {
     });
   }
 
-  get(vendorId: string, queryId: string): Observable<QueryDetail> {
+  get(vendorId: string | null, queryId: string): Observable<QueryDetail> {
+    const headers = vendorHeader(vendorId);
     return this.#http.get<QueryDetail>(
       `${this.#base}/${encodeURIComponent(queryId)}`,
-      { headers: vendorHeader(vendorId) },
+      headers ? { headers } : {},
+    );
+  }
+
+  trail(vendorId: string | null, queryId: string): Observable<QueryTrailResponse> {
+    const headers = vendorHeader(vendorId);
+    return this.#http.get<QueryTrailResponse>(
+      `${this.#base}/${encodeURIComponent(queryId)}/trail`,
+      headers ? { headers } : {},
     );
   }
 }

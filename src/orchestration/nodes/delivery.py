@@ -32,6 +32,7 @@ from models.ticket import TicketCreateRequest
 from models.workflow import PipelineState
 from utils.exceptions import GraphAPIError
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -134,6 +135,16 @@ class DeliveryNode:
                 query_id=query_id,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="delivery",
+                status="failed",
+                details={
+                    "processing_path": processing_path,
+                    "error_type": "ticket_creation_failed",
+                },
+            )
             return {
                 "ticket_info": None,
                 "status": "DELIVERY_FAILED",
@@ -173,6 +184,17 @@ class DeliveryNode:
                 ticket_id=ticket_id,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="delivery",
+                status="failed",
+                details={
+                    "processing_path": processing_path,
+                    "ticket_id": ticket_id,
+                    "error_type": "email_send_failed",
+                },
+            )
             return {
                 "ticket_info": ticket_info,
                 "status": "DELIVERY_FAILED",
@@ -192,6 +214,10 @@ class DeliveryNode:
         if processing_path == "A":
             await self._register_resolution_sent(query_id, correlation_id)
 
+        # `email_sent=True` from `_send_email` collapses two outcomes:
+        # actually sent vs skipped because no recipient was on file.
+        # Surface the distinction on the timeline so admins can tell.
+        email_skipped_no_recipient = not bool(recipient)
         logger.info(
             "Delivery complete",
             step="delivery",
@@ -199,8 +225,23 @@ class DeliveryNode:
             ticket_id=ticket_id,
             processing_path=processing_path,
             final_status=final_status,
-            email_sent=True,
+            email_sent=not email_skipped_no_recipient,
+            email_skipped_no_recipient=email_skipped_no_recipient,
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="delivery",
+            status="success",
+            details={
+                "processing_path": processing_path,
+                "ticket_id": ticket_id,
+                "final_status": final_status,
+                "email_sent": not email_skipped_no_recipient,
+                "email_skipped_no_recipient": email_skipped_no_recipient,
+            },
         )
 
         return {
@@ -238,6 +279,17 @@ class DeliveryNode:
                 query_id=query_id,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="delivery",
+                action="resolution_mode",
+                status="failed",
+                details={
+                    "processing_path": "B",
+                    "error_type": "missing_ticket_number",
+                },
+            )
             return {
                 "status": "DELIVERY_FAILED",
                 "error": "ticket_number missing in resolution_mode",
@@ -263,6 +315,18 @@ class DeliveryNode:
             query_id=query_id,
         )
         if not email_sent:
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="delivery",
+                action="resolution_mode",
+                status="failed",
+                details={
+                    "processing_path": "B",
+                    "ticket_id": ticket_id,
+                    "error_type": "email_send_failed",
+                },
+            )
             return {
                 "status": "DELIVERY_FAILED",
                 "error": "Resolution-mode email send failed",
@@ -306,12 +370,29 @@ class DeliveryNode:
 
         await self._register_resolution_sent(query_id, correlation_id)
 
+        email_skipped_no_recipient = not bool(recipient)
         logger.info(
             "Resolution-mode delivery complete",
             step="delivery",
             query_id=query_id,
             ticket_id=ticket_id,
+            email_sent=not email_skipped_no_recipient,
+            email_skipped_no_recipient=email_skipped_no_recipient,
             correlation_id=correlation_id,
+        )
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="delivery",
+            action="resolution_mode",
+            status="success",
+            details={
+                "processing_path": "B",
+                "ticket_id": ticket_id,
+                "final_status": "RESOLVED",
+                "email_sent": not email_skipped_no_recipient,
+                "email_skipped_no_recipient": email_skipped_no_recipient,
+            },
         )
         return {
             "status": "RESOLVED",

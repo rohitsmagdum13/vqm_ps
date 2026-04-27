@@ -2,6 +2,7 @@ import { HttpErrorResponse } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { AuthService } from '../core/auth/auth.service';
 import type { Priority, Query, QueryMessage, QueryStatus } from '../shared/models/query';
+import type { TimelineEvent } from '../shared/models/timeline';
 import {
   QueryService,
   type QueryDetail,
@@ -127,6 +128,7 @@ function listItemToQuery(row: QueryListItem): Query {
     sla,
     slaCls,
     agent: row.source === 'email' ? 'Email' : 'Portal',
+    vendor: row.vendor_id ?? null,
     tl: [],
     ai: '',
     msgs: [],
@@ -139,15 +141,10 @@ function detailToQuery(d: QueryDetail): Query {
   if (d.description) {
     msgs.push({ f: 'vendor', t: d.description, ts: formatSubmitted(d.created_at) });
   }
-  return {
-    ...base,
-    tl: [
-      { c: '#10B981', t: 'Query received & logged by VQMS', ts: formatSubmitted(d.created_at) },
-      { c: '#3c2cda', t: `Status: ${d.status}`, ts: formatSubmitted(d.updated_at) },
-    ],
-    ai: '',
-    msgs,
-  };
+  // The detail page now renders the live pipeline timeline from the
+  // `audit.action_log`-backed trail signal — `tl` is left empty for
+  // type compatibility with seed/list views that still consume it.
+  return { ...base, tl: [], ai: '', msgs };
 }
 
 @Injectable({ providedIn: 'root' })
@@ -162,6 +159,7 @@ export class QueriesStore {
   readonly #error = signal<string | null>(null);
   readonly #hasLoaded = signal<boolean>(false);
   readonly #selected = signal<Query | null>(null);
+  readonly #trail = signal<readonly TimelineEvent[]>([]);
 
   readonly queries = this.#queries.asReadonly();
   readonly statusFilter = this.#statusFilter.asReadonly();
@@ -170,6 +168,7 @@ export class QueriesStore {
   readonly error = this.#error.asReadonly();
   readonly hasLoaded = this.#hasLoaded.asReadonly();
   readonly selected = this.#selected.asReadonly();
+  readonly trail = this.#trail.asReadonly();
 
   readonly filtered = computed<readonly Query[]>(() => {
     const s = this.#statusFilter();
@@ -199,15 +198,16 @@ export class QueriesStore {
   });
 
   refresh(): void {
+    const isAdmin = this.#auth.role() === 'admin';
     const vendorId = this.#auth.vendorId();
-    if (!vendorId) {
+    if (!isAdmin && !vendorId) {
       this.#error.set('No vendor ID on this session.');
       this.#hasLoaded.set(true);
       return;
     }
     this.#loading.set(true);
     this.#error.set(null);
-    this.#svc.list(vendorId).subscribe({
+    this.#svc.list(isAdmin ? null : vendorId).subscribe({
       next: (resp) => {
         this.#queries.set(resp.queries.map(listItemToQuery));
         this.#loading.set(false);
@@ -222,19 +222,35 @@ export class QueriesStore {
   }
 
   loadDetail(queryId: string): void {
-    const vendorId = this.#auth.vendorId();
-    if (!vendorId || !queryId) {
+    if (!queryId) {
       this.#selected.set(null);
+      this.#trail.set([]);
+      return;
+    }
+    const isAdmin = this.#auth.role() === 'admin';
+    const vendorId = this.#auth.vendorId();
+    if (!isAdmin && !vendorId) {
+      this.#selected.set(null);
+      this.#trail.set([]);
       return;
     }
     const cached = this.#queries().find((q) => q.id === queryId);
     if (cached) this.#selected.set(cached);
-    this.#svc.get(vendorId, queryId).subscribe({
+    // Reset trail to avoid showing stale events from a previous query.
+    this.#trail.set([]);
+
+    const headerVendor = isAdmin ? null : vendorId;
+    this.#svc.get(headerVendor, queryId).subscribe({
       next: (d) => this.#selected.set(detailToQuery(d)),
       error: (err: unknown) => {
         this.#error.set(errorMessage(err));
         if (!cached) this.#selected.set(null);
       },
+    });
+    // Trail is best-effort — errors here shouldn't blank the detail page.
+    this.#svc.trail(headerVendor, queryId).subscribe({
+      next: (resp) => this.#trail.set(resp.events),
+      error: () => this.#trail.set([]),
     });
   }
 

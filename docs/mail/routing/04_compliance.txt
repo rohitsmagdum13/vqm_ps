@@ -1,0 +1,28 @@
+Subject: ISO 27001 certification renewal - audit window required
+
+Hi Compliance Team,
+
+Our ISO 27001 certificate expires on 30 May 2026. We need to schedule the renewal audit before that date to avoid a gap in compliance coverage.
+
+• Certificate Number: ISO27K-2025-V001
+• Issue Date: 02 June 2023
+• Expiry Date: 30 May 2026
+• Auditor (last cycle): TUV India Pvt Ltd
+• Vendor Code: V-001
+
+Could you please share:
+1. Confirmed auditor contact for this cycle
+2. Available audit windows in May
+3. Document checklist for re-certification
+4. Any updated ESG / sustainability questions added since last audit
+5. Renewal fee invoice format
+
+We would like the audit kickoff by 10 May 2026 at the latest.
+
+Thanks,
+Dinesh Chauhan
+TechNova Solutions
+dinesh.chauhan@technova.io
+
+---
+Expected routing: COMPLIANCE

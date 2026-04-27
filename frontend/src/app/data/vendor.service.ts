@@ -20,6 +20,22 @@ export class VendorService {
     return this.#http.get<Vendor[]>(this.#base);
   }
 
+  getById(vendorId: string): Observable<Vendor> {
+    // Backend exposes only GET /vendors (list); filter client-side. Vendor
+    // count is bounded and admin-only so the extra payload is fine.
+    return this.list().pipe(
+      map((vendors) => {
+        const match = vendors.find(
+          (v) => v.vendor_id === vendorId || v.id === vendorId,
+        );
+        if (!match) {
+          throw new Error(`Vendor ${vendorId} not found`);
+        }
+        return match;
+      }),
+    );
+  }
+
   create(input: VendorCreateInput): Observable<Vendor> {
     return this.#http.post<VendorCreateResult>(this.#base, input).pipe(
       map((r) => {

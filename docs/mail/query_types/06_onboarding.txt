@@ -1,0 +1,27 @@
+Subject: New vendor onboarding - documentation checklist required
+
+Hi Vendor Onboarding Team,
+
+We are starting the onboarding process as your new supplier and would like to confirm the documentation we need to submit.
+
+Company Details:
+• Legal Name: NorthStar Engineering Pvt Ltd
+• GSTIN: 27ABCDE1234F1Z5
+• PAN: ABCDE1234F
+• Registered Office: Pune, Maharashtra
+• Primary Contact: Suresh Patel, Procurement Lead
+• Email: suresh.patel@northstar-engg.com
+• Phone: +91-9345678912
+
+Could you please share:
+1. The complete list of mandatory documents (KYC, banking, GST, ISO, MSME, etc.)
+2. The vendor registration form template
+3. The expected turnaround time for activation
+4. Whether dual signatory is required for the bank-detail change form
+
+We are aiming to be transaction-ready by 15 May 2026.
+
+Best regards,
+Suresh Patel
+NorthStar Engineering Pvt Ltd
+suresh.patel@northstar-engg.com

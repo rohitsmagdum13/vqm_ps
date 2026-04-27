@@ -1,0 +1,28 @@
+Subject: Several pending items - please assist
+
+Hello,
+
+We have a few outstanding things that we need help with. Listing them together so you can route appropriately:
+
+1. Some of our recent payments may be overdue, or maybe they were processed and we missed the confirmation. Hard to tell from our side.
+2. We want to update our banking details — moving to a different bank for routing.
+3. The renewal discussion that was happening with your procurement team — what is the latest? We have not heard back.
+4. There was a quality concern with the last batch we received but our QC team still has it under review.
+
+Please advise on all of these. Happy to discuss on a call if easier.
+
+Best regards,
+Sneha Singh
+Acme Industrial
+sneha.singh@acmeindustrial.com
++91-9123456789
+
+---
+Expected pipeline behaviour:
+- intent_classification: multi_issue (4 unrelated topics)
+- extracted_entities: {} (no specific invoice, PO, batch ID)
+- multi_issue_detected: true
+- single_issue_detection: very low (~0.3)
+- Different topics route to different teams (AP-FINANCE / TREASURY / PROCUREMENT / QUALITY)
+- confidence_score: ~0.55–0.65 → Path C
+- Reviewer should split this into separate tickets

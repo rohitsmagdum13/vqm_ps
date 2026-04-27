@@ -1,0 +1,29 @@
+{
+  "query_type": "ONBOARDING",
+  "kb_article": "KB-011",
+  "team": "vendor-management",
+  "samples": [
+    {
+      "label": "Path A — onboarding documentation pack",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "ONBOARDING",
+        "subject": "Onboarding documentation needed for our new subsidiary entity",
+        "description": "Hi Vendor Management, we are onboarding our new subsidiary 'Acme Industrial Logistics Pvt Ltd' as a separate vendor. Could you share the standard onboarding pack (registration form, NDA template, payment terms, integration guide) and the typical timeline from doc submission to vendor-id issue? Existing parent vendor id is V-001.",
+        "priority": "MEDIUM",
+        "reference_number": null
+      }
+    },
+    {
+      "label": "Path B — niche corporate-restructuring scenario",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "ONBOARDING",
+        "subject": "Vendor record migration after legal entity merger",
+        "description": "Effective 2026-04-01 our two existing entities (V-001 and V-014) have legally merged into a single entity 'Acme Industrial United'. Open POs and invoices exist on both vendor IDs. What is the recommended migration path — single new vendor record, retain V-001 and absorb V-014, or run them in parallel during a transition period? Need a call with vendor-management.",
+        "priority": "HIGH",
+        "reference_number": null
+      }
+    }
+  ]
+}

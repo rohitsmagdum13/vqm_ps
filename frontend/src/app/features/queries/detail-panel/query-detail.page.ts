@@ -2,22 +2,24 @@ import { ChangeDetectionStrategy, Component, computed, effect, inject, signal } 
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { FormControl, ReactiveFormsModule, Validators } from '@angular/forms';
+import { AuthService } from '../../../core/auth/auth.service';
 import { QueriesStore } from '../../../data/queries.store';
 import { ToastService } from '../../../core/notifications/toast.service';
 import { BadgeComponent } from '../../../shared/ui/badge/badge';
 import { priorityTone, statusTone } from '../../../shared/ui/badge/badge-tones';
 import type { MessageAuthor } from '../../../shared/models/query';
+import { PipelineTimeline } from './pipeline-timeline';
 
 @Component({
   selector: 'app-query-detail-page',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [RouterLink, ReactiveFormsModule, BadgeComponent],
+  imports: [RouterLink, ReactiveFormsModule, BadgeComponent, PipelineTimeline],
   template: `
     <section class="space-y-6 animate-[fade-up_0.3s_ease-out]">
       <div class="flex items-center justify-between">
         <a
-          routerLink="/queries"
+          [routerLink]="backLink()"
           class="inline-flex items-center gap-1 text-sm text-fg-dim hover:text-primary transition"
         >
           <span aria-hidden="true">←</span> Back to queries
@@ -56,27 +58,11 @@ import type { MessageAuthor } from '../../../shared/models/query';
           </dl>
         </header>
 
-        <section class="rounded-[var(--radius-md)] bg-surface border border-border-light shadow-sm p-5">
-          <h2 class="text-[10px] font-mono tracking-wider uppercase text-fg-dim mb-4">Timeline</h2>
-          <ol class="space-y-0">
-            @for (step of q.tl; track $index; let last = $last) {
-              <li class="relative flex gap-3 pb-4">
-                @if (!last) {
-                  <span class="absolute left-[5px] top-4 bottom-0 w-px bg-border-light" aria-hidden="true"></span>
-                }
-                <span
-                  class="relative z-10 mt-1 h-[11px] w-[11px] shrink-0 rounded-full border-2 border-surface"
-                  [style.background-color]="step.c"
-                  [class.animate-pulse]="step.p === true"
-                ></span>
-                <div class="min-w-0">
-                  <div class="text-sm text-fg leading-snug">{{ step.t }}</div>
-                  <div class="text-[11px] font-mono text-fg-dim mt-0.5">{{ step.ts }}</div>
-                </div>
-              </li>
-            }
-          </ol>
-        </section>
+        <app-pipeline-timeline
+          [events]="trail()"
+          [polling]="isPipelineActive()"
+          [showDetails]="isAdmin()"
+        />
 
         <section
           class="rounded-[var(--radius-md)] border border-success/20 p-4 space-y-2 bg-gradient-to-br from-success/5 to-primary/5"
@@ -152,11 +138,23 @@ import type { MessageAuthor } from '../../../shared/models/query';
 export class QueryDetailPage {
   readonly #store = inject(QueriesStore);
   readonly #toast = inject(ToastService);
+  readonly #auth = inject(AuthService);
   readonly #params = toSignal(inject(ActivatedRoute).paramMap);
 
   protected readonly id = computed(() => this.#params()?.get('id') ?? '');
   protected readonly query = computed(() => this.#store.selected());
+  protected readonly trail = computed(() => this.#store.trail());
   protected readonly sending = signal(false);
+  protected readonly isAdmin = computed(() => this.#auth.role() === 'admin');
+  protected readonly backLink = computed(() =>
+    this.isAdmin() ? '/admin/queries' : '/queries',
+  );
+  // The `<app-pipeline-timeline>` shows a "live" badge while polling.
+  // Treat the query as in-flight unless it has reached a terminal state.
+  protected readonly isPipelineActive = computed(() => {
+    const status = this.query()?.status;
+    return status !== 'Resolved' && status !== 'Breached';
+  });
 
   constructor() {
     effect(() => {

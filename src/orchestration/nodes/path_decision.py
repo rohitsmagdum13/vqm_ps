@@ -20,6 +20,7 @@ from config.settings import Settings
 from models.workflow import PipelineState
 from models.ticket import RoutingDecision, SLATarget
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -64,15 +65,29 @@ class PathDecisionNode:
             content_length = len(top_match.get("content_snippet", ""))
             has_specific_facts = content_length >= MIN_CONTENT_LENGTH
 
+        query_id = state.get("query_id", "")
+        best_score = kb_result.get("best_match_score")
         if has_sufficient and has_specific_facts:
             # Path A: AI can resolve using KB articles
             logger.info(
                 "Path A selected — KB match found with specific facts",
                 step="path_decision",
                 decision="path_a",
-                best_score=kb_result.get("best_match_score"),
+                best_score=best_score,
                 matches_count=len(matches),
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="path_decision",
+                action="path_a_selected",
+                status="success",
+                details={
+                    "processing_path": "A",
+                    "best_score": best_score,
+                    "matches_count": len(matches),
+                },
             )
             return {
                 "processing_path": "A",
@@ -85,10 +100,23 @@ class PathDecisionNode:
                 "Path B selected — insufficient KB match for resolution",
                 step="path_decision",
                 decision="path_b",
-                best_score=kb_result.get("best_match_score"),
+                best_score=best_score,
                 has_sufficient=has_sufficient,
                 has_specific_facts=has_specific_facts,
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="path_decision",
+                action="path_b_selected",
+                status="success",
+                details={
+                    "processing_path": "B",
+                    "best_score": best_score,
+                    "has_sufficient": has_sufficient,
+                    "has_specific_facts": has_specific_facts,
+                },
             )
 
             # Update routing_decision to flag human investigation required

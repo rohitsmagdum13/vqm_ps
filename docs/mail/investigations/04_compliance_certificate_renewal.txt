@@ -1,0 +1,27 @@
+Subject: ISO 27001 renewal package - audit kickoff timeline + insurance template
+
+Hi Compliance Team,
+
+Our ISO 27001 certificate expires on 30 May 2026. We need the full renewal package and clarity on a few sub-items so we can plan the audit, internal prep, and submission window.
+
+• Certificate Number: ISO27K-2025-V003
+• Issue Date: 28 May 2023
+• Expiry Date: 30 May 2026
+• Current Auditor (last cycle): TUV India Pvt Ltd
+• Vendor Code: V-003
+
+What we need:
+1. Auditor contact list — confirmed for this cycle
+2. Audit kickoff slot (we are flexible 05–15 May 2026)
+3. Document checklist for re-certification (specifically: any changes since 2023?)
+4. Insurance certificate template — your sample format so we can pre-fill
+5. ESG / sustainability questionnaire — submission deadline + which annex
+6. The renewal fee invoice format (we want to budget the line item correctly)
+
+We have already started internal pre-audit on Annex A controls. If you can give us the auditor contact this week, we can set up a call and confirm scope before the audit kickoff.
+
+Best,
+Suresh Patel
+Acme Corp
+suresh.patel@acmecorp.com
++91-9345678912

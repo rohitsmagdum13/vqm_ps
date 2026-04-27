@@ -1,0 +1,32 @@
+Subject: Vendor portal outage 4 hours - 12 POs blocked, RCA + ETA needed
+
+Hi Tech Support Team,
+
+We are unable to access the vendor portal since 08:00 IST today (25 April 2026). The page returns "503 Service Unavailable" on every attempt across 3 different browsers and 2 different machines.
+
+This is blocking us in a few important ways:
+1. Twelve POs are pending submission with response deadlines today
+2. Four downstream vendors of ours are waiting on our acknowledgments
+3. We cannot upload signed contract addenda that were due this week
+
+What we need:
+1. Confirmation that this is a known outage and not specific to our account
+2. Root cause once known (DB? Cognito? load balancer?)
+3. Confirmed ETA for restoration
+4. Workaround for emergency PO submissions during the outage (email-to-portal? phone?)
+5. Whether the response deadlines for our 12 POs will be auto-extended given the platform-side issue
+
+• Affected Username: admin@northstar-engg.com
+• Vendor Code: V-009
+• Outage Start: 08:00 IST, 25 April 2026
+• Current Duration: 4 hours
+• Browsers Tried: Chrome 121, Edge 121, Firefox 124
+• Error: "503 Service Unavailable" on every page including /login
+
+Please escalate as appropriate. Happy to share network traces from our side if useful.
+
+Regards,
+Suresh Patel
+NorthStar Engineering Pvt Ltd
+suresh.patel@northstar-engg.com
++91-9345678912

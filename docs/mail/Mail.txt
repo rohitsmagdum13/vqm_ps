@@ -1,0 +1,295 @@
+Subject: URGENT: Payment Overdue – Invoice SCI/2025-26/0892 | SteelCraft Industries (V-011)
+
+Dear Accounts Payable Team,
+
+I am writing to follow up on the payment status of the below invoice, which remains outstanding beyond the agreed Net-45 payment terms.
+
+• Invoice Number: SCI/2025-26/0892
+• Invoice Date: 15 January 2026
+• Due Date: 01 March 2026 (Net-45)
+• Contract Reference: CNT-V-011-2025
+• Vendor Code: V-011
+• Outstanding Amount: ₹7,67,000.00
+
+As of today, the payment is overdue by 44 days. We have previously raised this matter via email on 10th March 2026, but have not yet received a response or a confirmed payment date.
+
+We understand that processing delays can occur, and we are happy to work with your team to resolve any outstanding queries or documentation requirements. However, we kindly request that a payment timeline be communicated to us at the earliest.
+
+Please find attached a formal Payment Reminder Letter for your records.
+
+Thank you for your prompt attention to this matter.
+
+Best regards,
+Shweta Das
+Accounts Manager
+SteelCraft Industries
+Phone: +91-9005855667
+Email: shweta.das@steelcraft.com
+
+
+
+
+
+
+Subject: Contract Renewal Request – CNT-V-012-2025 | CloudWave Technologies (Expiring Feb 2026)
+
+Dear Vendor Management Team,
+
+I hope this email finds you well.
+
+I am writing to formally initiate the renewal process for our existing contract, which is approaching its expiry date. The details are as follows:
+
+• Current Contract: CNT-V-012-2025
+• Contract Period: 01 February 2025 – 01 February 2026
+• Vendor Code: V-012
+• Current Contract Value: ₹81,00,000.00
+• Vendor Tier: GOLD
+• Category: IT Services
+
+Over the past year, CloudWave Technologies has consistently met all SLA commitments, maintaining a 4-hour response time and 2-day resolution window as per our agreement. Our team has delivered cloud migration, managed services, and DevOps automation support without any major escalations.
+
+We would like to propose the following for the renewal:
+1. Extension of the contract for an additional 12 months (Feb 2026 – Feb 2027)
+2. Revised scope to include AI/ML infrastructure support
+3. A proposed 8% increase in contract value to accommodate the expanded scope
+
+Please find attached our formal Contract Renewal Proposal for your review. We are available for a discussion at your convenience to finalize the terms.
+
+Thank you for the continued partnership.
+
+Warm regards,
+Anjali Malhotra
+Accounts Manager
+CloudWave Technologies
+Phone: +91-8457293575
+Email: anjali.malhotra@cloudwave.io
+
+
+
+
+
+
+Subject: Credit Note Request – Invoice RSL/2026-27/0045 | RapidShip Logistics (Dispute - V-013)
+
+Dear Accounts Payable Team,
+
+I am writing regarding a billing discrepancy on our recent invoice and to formally request a credit note adjustment.
+
+• Original Invoice: RSL/2026-27/0045
+• Invoice Date: 01 March 2026
+• Contract Reference: CNT-V-013-2025
+• Vendor Code: V-013
+• Original Amount: ₹19,12,000.00
+• Disputed Amount: ₹2,85,000.00
+• Credit Note Requested: CN-RSL/2026-27/0011
+
+The dispute pertains to the following:
+
+1. Shipment #SH-4521 (Pune to Hyderabad): Goods were delivered 3 days beyond the committed timeline. As per our SLA, a 15% penalty on the trip value applies. Penalty amount: ₹1,35,000.00
+
+2. Shipment #SH-4538 (Mumbai to Delhi): Partial damage reported during transit. 12 cartons out of 80 were found damaged on arrival. Replacement value claim: ₹1,50,000.00
+
+Please find attached the formal Credit Note Request along with supporting documentation including POD copies, damage photographs, and delivery timeline records.
+
+We request that the credit note be issued against our next billing cycle or adjusted against the outstanding payment. Kindly acknowledge receipt and share an expected resolution timeline.
+
+Best regards,
+Sandeep Mishra
+Accounts Manager
+RapidShip Logistics
+Phone: +91-7602078388
+Email: sandeep.mishra@rapidship.in
+
+
+
+
+
+
+
+
+Subject: Vendor KYC & Bank Details Update – CleanSpace Facilities (V-014) | Action Required
+
+Dear Vendor Management Team,
+
+I am writing to inform you of an update to our banking and KYC details. As part of a recent corporate restructuring, CleanSpace Facilities has transitioned its primary banking relationship, and we request that our vendor records be updated accordingly.
+
+• Vendor Code: V-014
+• Contract Reference: CNT-V-014-2025
+• Entity Name: CleanSpace Facilities
+• Category: Facilities Management
+
+Updated Bank Details:
+• Bank Name: HDFC Bank, Andheri East Branch
+• Account Number: 50200078901234
+• IFSC Code: HDFC0000502
+• Account Type: Current Account
+• Account Holder: CleanSpace Facilities
+
+Previous Bank Details (to be deactivated):
+• Bank Name: Kotak Mahindra Bank, Powai Branch
+• Account Number: 98761234500098
+
+Please find attached the following supporting documents for verification:
+1. Updated Bank Account Confirmation Letter (on bank letterhead)
+2. Cancelled cheque for new account
+3. Updated GST Registration Certificate
+4. Company PAN Card copy
+
+We request that all future payments be processed to the new account effective immediately. Kindly confirm the update once completed.
+
+Best regards,
+Pooja Kulkarni
+Accounts Manager
+CleanSpace Facilities
+Phone: +91-8903232052
+Email: pooja.kulkarni@cleanspace.co.in
+
+
+
+
+
+Subject: Scope Change Request – CNT-V-015-2025 | InsightPro Research (Amendment for GenAI & Governance)
+
+Dear Vendor Management Team,
+
+I hope this message finds you well.
+
+I am writing to formally request a scope amendment to our existing contract. The details of the current engagement and the proposed changes are outlined below.
+
+Current Contract Details:
+• Contract: CNT-V-015-2025
+• Contract Period: 01 February 2025 – 01 February 2026
+• Vendor Code: V-015
+• Current Contract Value: ₹4,50,00,000.00
+• Vendor Tier: GOLD
+• Category: Professional Services
+
+Proposed Scope Amendment:
+
+1. Addition of Generative AI Research Stream
+   • Market intelligence on enterprise GenAI adoption
+   • Competitive landscape analysis (20 vendors)
+   • Additional Value: ₹12,00,000.00
+
+2. Extended Data Governance Advisory
+   • Regulatory compliance mapping (DPDP Act 2023)
+   • Data classification framework for 3 business units
+   • Additional Value: ₹8,50,000.00
+
+3. Quarterly CXO Briefing Sessions (4 sessions)
+   • Executive-level research presentations
+   • Custom industry benchmark reports
+   • Additional Value: ₹6,00,000.00
+
+Total Amendment Value: ₹26,50,000.00
+Revised Contract Value: ₹4,76,50,000.00
+
+Please find attached the formal Scope Change Request (SCR) document with detailed deliverables, timelines, and resource allocation. We request that this amendment be reviewed and approved within 15 business days to ensure continuity of deliverables.
+
+We are available for a call or meeting to discuss the proposal in detail.
+
+Best regards,
+Sandeep Sharma
+Accounts Manager
+InsightPro Research
+Phone: +91-7400560567
+Email: sandeep.sharma@insightpro.com
+
+
+
+
+
+
+
+
+Subject: Invoice Submission – SGS/2026-27/0112 | SecureGuard Services (March 2026 Security Services)
+
+Dear Accounts Payable Team,
+
+Please find attached our invoice for security services provided by SecureGuard Services during March 2026.
+
+• Invoice Number: SGS/2026-27/0112
+• Invoice Date: 01 April 2026
+• Service Period: 01 March 2026 – 31 March 2026
+• Contract Reference: CNT-V-010-2025
+• Vendor Code: V-010
+• Total Amount: ₹8,26,000.00 (inclusive of GST)
+
+This invoice covers manned guarding services (24x7), CCTV surveillance monitoring and maintenance, access control system management, and fire safety drill coordination across your Pune office campus. All duty rosters, incident logs, and monthly security audit reports have been submitted to your facilities management team.
+
+Kindly process the payment within the agreed Net-60 terms. Should you require guard deployment schedules, CCTV health reports, or incident summary documentation, please feel free to reach out.
+
+Thank you for placing your trust in SecureGuard.
+
+Best regards,
+Kiran Das
+Accounts Manager
+SecureGuard Services
+Phone: +91-7817804383
+Email: kiran.das@secureguard.in
+
+
+
+
+
+
+
+Subject: Invoice Submission – CC/2026-27/0291 | Catalyst Consulting (March 2026 Consulting Services)
+
+Dear Accounts Payable Team,
+
+I hope this message finds you well.
+
+Please find attached the invoice for management consulting services delivered by Catalyst Consulting during March 2026.
+
+• Invoice Number: CC/2026-27/0291
+• Invoice Date: 01 April 2026
+• Service Period: 01 March 2026 – 31 March 2026
+• Contract Reference: CNT-V-008-2025
+• Vendor Code: V-008
+• Total Amount: ₹24,78,000.00 (inclusive of GST)
+
+The invoice pertains to digital transformation strategy advisory, process reengineering workshops, change management consulting, and organizational design recommendations. All deliverables including the strategy roadmap document and workshop summary reports have been submitted to your transformation program office.
+
+Kindly process the payment within the agreed Net-30 terms. If you need engagement hours breakdown, deliverable sign-off sheets, or workshop attendance records, we are happy to provide them.
+
+We value our long-standing association since 2019 and look forward to continuing this partnership.
+
+Best regards,
+Vikram Verma
+Accounts Manager
+Catalyst Consulting
+Phone: +91-8419179580
+Email: vikram.verma@catalystconsult.com
+
+
+
+
+
+
+
+Subject: Invoice Submission – PEL/2026-27/0178 | Precision Engineers Ltd (March 2026 Manufacturing Services)
+
+Dear Accounts Payable Team,
+
+Please find attached our invoice for precision manufacturing and machining services delivered by Precision Engineers Ltd during March 2026.
+
+• Invoice Number: PEL/2026-27/0178
+• Invoice Date: 01 April 2026
+• Service Period: 01 March 2026 – 31 March 2026
+• Contract Reference: CNT-V-007-2025
+• Vendor Code: V-007
+• Total Amount: ₹12,98,000.00 (inclusive of GST)
+
+The invoice covers CNC machining of custom components, sheet metal fabrication, surface treatment and finishing services, and quality inspection and testing as per your engineering specifications. All components have been delivered with QC certificates and dimensional inspection reports as per the agreed standards.
+
+Kindly process the payment within the agreed Net-30 terms. Should you require material test certificates, inspection reports, or any technical documentation, please reach out.
+
+Thank you for your continued business.
+
+Best regards,
+Manish Sharma
+Accounts Manager
+Precision Engineers Ltd
+Phone: +91-7304912982
+Email: manish.sharma@precisioneng.com

@@ -1,0 +1,29 @@
+{
+  "query_type": "CONTRACT_QUERY",
+  "kb_article": "KB-004",
+  "team": "legal-compliance",
+  "samples": [
+    {
+      "label": "Path A — clause clarification (clear KB question)",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "CONTRACT_QUERY",
+        "subject": "Clarification on Clause 7.3 penalty schedule",
+        "description": "Hi Legal team, our master agreement signed in 2024 references Clause 7.3 for the late-delivery penalty schedule. Could you confirm whether the standard 2.5% per month cap still applies, what the maximum aggregate penalty is, and where to find the latest exhibit referenced in the clause?",
+        "priority": "MEDIUM",
+        "reference_number": "MSA-2024-V001"
+      }
+    },
+    {
+      "label": "Path B — renewal terms request (likely KB miss)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "CONTRACT_QUERY",
+        "subject": "Request for renewal terms with revised pricing",
+        "description": "Our existing contract expires on 2026-09-30. We would like to begin renewal discussions and propose a 6% increase in unit rates given the rise in raw material costs. Could you share the renewal workflow, who from your side will lead the negotiation, and any internal timelines we should align with?",
+        "priority": "MEDIUM",
+        "reference_number": "MSA-2024-V001"
+      }
+    }
+  ]
+}

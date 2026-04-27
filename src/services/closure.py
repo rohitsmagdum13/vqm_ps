@@ -20,7 +20,15 @@ Owns the post-resolution lifecycle of a VQMS case:
      window we leave the prior case closed and link the new query_id to
      it via workflow.case_execution.linked_query_id.
 
-  4. close_case — the single write-path that actually closes a case. Used
+  4. handle_followup_info — called for an EXISTING_OPEN reply that was
+     NOT a confirmation. Merges the new reply (body + attachments) into
+     the prior case rather than letting it spawn a duplicate ticket and
+     duplicate LLM run. Branches on the prior case's pipeline status
+     so a mid-pipeline merge writes additional_context, a Path B case
+     gets a ServiceNow work note, and a Path C / approval-gated case
+     just queues the new info for the next checkpoint.
+
+  5. close_case — the single write-path that actually closes a case. Used
      by detect_confirmation (VENDOR_CONFIRMED) and AutoCloseScheduler
      (AUTO_CLOSED). Updates case_execution + closure_tracking, flips the
      ServiceNow ticket to Closed, publishes TicketClosed, and writes an
@@ -41,6 +49,7 @@ Design notes:
 
 from __future__ import annotations
 
+import orjson
 import structlog
 
 from config.settings import Settings
@@ -262,7 +271,134 @@ class ClosureService:
         return "LINKED_NEW_CASE"
 
     # ------------------------------------------------------------------
-    # 4. close_case — the single write-path for closing a case
+    # 4. handle_followup_info — called for EXISTING_OPEN that was NOT a confirmation
+    # ------------------------------------------------------------------
+
+    # Statuses where the prior case is still actively moving through the
+    # pipeline (or paused waiting on a human). Merging the new info here
+    # is safe because no resolution email has gone out yet.
+    _MERGEABLE_STATUSES: frozenset[str] = frozenset(
+        {
+            "RECEIVED",
+            "ANALYZING",
+            "ROUTING",
+            "DRAFTING",
+            "VALIDATING",
+            "DELIVERING",
+            "PAUSED",  # Path C parked at human review
+            "PENDING_APPROVAL",  # Path A parked at admin approval
+            "AWAITING_RESOLUTION",  # Path B handed off to human team
+        }
+    )
+
+    @log_service_call
+    async def handle_followup_info(
+        self,
+        *,
+        conversation_id: str | None,
+        new_query_id: str,
+        body_text: str,
+        attachments_summary: list[dict] | None = None,
+        correlation_id: str = "",
+    ) -> str:
+        """Merge a follow-up reply into the prior open case on the same thread.
+
+        Vendors routinely realise they forgot a PDF or a clarifying detail
+        and reply on the same thread. Without this method the reply spawns
+        a duplicate query_id, ticket, and LLM run. This method:
+
+          1. Finds the prior query_id on the same conversation_id.
+          2. Reads its current pipeline status.
+          3. If the status is in ``_MERGEABLE_STATUSES``, appends the new
+             body + attachments_summary to ``case_execution.additional_context``
+             on the prior case. Marks the new query_id as MERGED_INTO_PARENT
+             and points its ``parent_query_id`` at the prior one so the
+             SQS-triggered pipeline run for the new query_id is a no-op.
+             For Path B (AWAITING_RESOLUTION) also adds a ServiceNow work
+             note so the human team sees the new info on the existing
+             ticket without a second incident being opened.
+          4. If the prior case is RESOLVED / CLOSED / unknown — does
+             nothing here; the existing handle_reopen path covers
+             post-resolution replies.
+
+        Returns one of:
+            "MERGED_MID_PIPELINE" — additional_context written, child marked
+            "MERGED_PATH_B"       — additional_context written + ServiceNow work note added
+            "SKIPPED"             — prior not mergeable (closed / unknown / no prior)
+
+        Non-critical: any failure is caught by the caller (email_intake)
+        and logged. The new query_id always remains a valid standalone
+        case so a partial merge is recoverable.
+        """
+        if not conversation_id or not new_query_id:
+            return "SKIPPED"
+
+        prior_query_id = await self._find_prior_query_by_conversation(
+            conversation_id, correlation_id
+        )
+        if not prior_query_id:
+            return "SKIPPED"
+        if prior_query_id == new_query_id:
+            # Defensive: should never happen because the new row hasn't
+            # been linked to the conversation yet, but if our SELECT
+            # picks it up we must not merge a case into itself.
+            return "SKIPPED"
+
+        prior_status = await self._fetch_case_status(prior_query_id)
+        if prior_status is None or prior_status not in self._MERGEABLE_STATUSES:
+            return "SKIPPED"
+
+        appended = await self._append_additional_context(
+            prior_query_id=prior_query_id,
+            new_query_id=new_query_id,
+            body_text=body_text,
+            attachments_summary=attachments_summary or [],
+            correlation_id=correlation_id,
+        )
+        if not appended:
+            return "SKIPPED"
+
+        await self._mark_child_merged(
+            new_query_id=new_query_id,
+            prior_query_id=prior_query_id,
+            correlation_id=correlation_id,
+        )
+
+        await self._record_followup_audit(
+            prior_query_id=prior_query_id,
+            new_query_id=new_query_id,
+            prior_status=prior_status,
+            attachments_count=len(attachments_summary or []),
+            correlation_id=correlation_id,
+        )
+
+        if prior_status == "AWAITING_RESOLUTION":
+            await self._add_servicenow_followup_note(
+                prior_query_id=prior_query_id,
+                new_query_id=new_query_id,
+                body_text=body_text,
+                attachments_summary=attachments_summary or [],
+                correlation_id=correlation_id,
+            )
+            logger.info(
+                "Follow-up info merged into Path B case",
+                prior_query_id=prior_query_id,
+                new_query_id=new_query_id,
+                correlation_id=correlation_id,
+            )
+            return "MERGED_PATH_B"
+
+        logger.info(
+            "Follow-up info merged into mid-pipeline case",
+            prior_query_id=prior_query_id,
+            new_query_id=new_query_id,
+            prior_status=prior_status,
+            correlation_id=correlation_id,
+        )
+        return "MERGED_MID_PIPELINE"
+
+    # ------------------------------------------------------------------
+    # 5. close_case — the single write-path for closing a case
     # ------------------------------------------------------------------
 
     @log_service_call
@@ -616,3 +752,222 @@ class ClosureService:
             prior_query_id=prior_query_id,
             correlation_id=correlation_id,
         )
+
+    # ------------------------------------------------------------------
+    # Follow-up info helpers (used by handle_followup_info)
+    # ------------------------------------------------------------------
+
+    async def _fetch_case_status(self, query_id: str) -> str | None:
+        """Return the current case_execution.status for a query_id, or None."""
+        try:
+            row = await self._postgres.fetchrow(
+                """
+                SELECT status
+                FROM workflow.case_execution
+                WHERE query_id = $1
+                """,
+                query_id,
+            )
+        except Exception:
+            logger.warning(
+                "case_execution status lookup failed",
+                query_id=query_id,
+            )
+            return None
+        if row is None:
+            return None
+        return row.get("status")
+
+    async def _append_additional_context(
+        self,
+        *,
+        prior_query_id: str,
+        new_query_id: str,
+        body_text: str,
+        attachments_summary: list[dict],
+        correlation_id: str,
+    ) -> bool:
+        """Append a follow-up entry to case_execution.additional_context.
+
+        Uses jsonb_set + COALESCE so the column is initialised to an
+        empty array on first follow-up and grows from there. Each entry
+        carries the source query_id and a timestamp so reviewers can
+        trace what was added when.
+
+        Returns True on success, False on DB failure (non-critical:
+        caller logs and continues).
+        """
+        entry = {
+            "source_query_id": new_query_id,
+            "received_at": TimeHelper.ist_now().isoformat(),
+            "body_text": (body_text or "")[:5000],
+            "attachments": attachments_summary,
+        }
+        try:
+            await self._postgres.execute(
+                """
+                UPDATE workflow.case_execution
+                SET additional_context = COALESCE(additional_context, '[]'::jsonb)
+                                         || $1::jsonb,
+                    updated_at = $2
+                WHERE query_id = $3
+                """,
+                orjson.dumps([entry]).decode("utf-8"),
+                TimeHelper.ist_now(),
+                prior_query_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to append additional_context (non-critical)",
+                prior_query_id=prior_query_id,
+                new_query_id=new_query_id,
+                correlation_id=correlation_id,
+            )
+            return False
+        return True
+
+    async def _mark_child_merged(
+        self,
+        *,
+        new_query_id: str,
+        prior_query_id: str,
+        correlation_id: str,
+    ) -> None:
+        """Flip the new (child) case to MERGED_INTO_PARENT and link it.
+
+        Once a child is in this terminal state the SQS-driven pipeline
+        run for it should detect the status and exit early — the merged
+        info now lives on the parent.
+        """
+        try:
+            await self._postgres.execute(
+                """
+                UPDATE workflow.case_execution
+                SET status = 'MERGED_INTO_PARENT',
+                    parent_query_id = $1,
+                    updated_at = $2
+                WHERE query_id = $3
+                """,
+                prior_query_id,
+                TimeHelper.ist_now(),
+                new_query_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to mark child MERGED_INTO_PARENT (non-critical)",
+                new_query_id=new_query_id,
+                prior_query_id=prior_query_id,
+                correlation_id=correlation_id,
+            )
+
+    async def _record_followup_audit(
+        self,
+        *,
+        prior_query_id: str,
+        new_query_id: str,
+        prior_status: str,
+        attachments_count: int,
+        correlation_id: str,
+    ) -> None:
+        """Write an audit.action_log entry for the merge.
+
+        Non-critical — a missing audit row never blocks the merge.
+        """
+        details = {
+            "prior_query_id": prior_query_id,
+            "new_query_id": new_query_id,
+            "prior_status": prior_status,
+            "attachments_count": attachments_count,
+        }
+        try:
+            await self._postgres.execute(
+                """
+                INSERT INTO audit.action_log
+                    (correlation_id, query_id, step_name, actor, action,
+                     status, details, created_at)
+                VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8)
+                """,
+                correlation_id or "",
+                prior_query_id,
+                "closure.followup",
+                "system",
+                "FOLLOWUP_INFO_RECEIVED",
+                "merged",
+                orjson.dumps(details).decode("utf-8"),
+                TimeHelper.ist_now(),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to write FOLLOWUP_INFO_RECEIVED audit row",
+                prior_query_id=prior_query_id,
+                new_query_id=new_query_id,
+                correlation_id=correlation_id,
+            )
+
+    async def _add_servicenow_followup_note(
+        self,
+        *,
+        prior_query_id: str,
+        new_query_id: str,
+        body_text: str,
+        attachments_summary: list[dict],
+        correlation_id: str,
+    ) -> None:
+        """Add a work note to the prior case's ServiceNow ticket.
+
+        Path B (AWAITING_RESOLUTION) means a human team is already
+        looking at this ticket. Surfacing the new info as a work note
+        is the difference between the team finding the missing PDF on
+        their own ticket vs. a second ticket showing up in their queue.
+        """
+        if self._servicenow is None:
+            return
+        try:
+            row = await self._postgres.fetchrow(
+                """
+                SELECT ticket_id
+                FROM workflow.ticket_link
+                WHERE query_id = $1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                prior_query_id,
+            )
+        except Exception:
+            logger.warning(
+                "ticket_link lookup failed — work note not added",
+                prior_query_id=prior_query_id,
+                correlation_id=correlation_id,
+            )
+            return
+
+        ticket_id = row.get("ticket_id") if row else None
+        if not ticket_id:
+            return
+
+        attachment_lines = "\n".join(
+            f"- {a.get('filename', '<unknown>')} "
+            f"({a.get('content_type', '')}, "
+            f"{a.get('size_bytes', 0)} bytes)"
+            for a in attachments_summary
+        )
+        note = (
+            f"VQMS follow-up reply from vendor on the same thread "
+            f"(child query {new_query_id}).\n\n"
+            f"Body:\n{(body_text or '')[:2000]}\n\n"
+            f"Attachments:\n{attachment_lines or '(none)'}"
+        )
+
+        try:
+            await self._servicenow.add_work_note(
+                ticket_id,
+                note,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "ServiceNow work note add failed (non-critical)",
+                prior_query_id=prior_query_id,
+                ticket_id=ticket_id,
+                correlation_id=correlation_id,
+            )

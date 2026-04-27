@@ -291,7 +291,8 @@ export class MessageViewer {
 
   protected openQuery(id: string): void {
     if (!id) return;
-    void this.#router.navigate(['/queries', id]);
+    // Email view is admin-only — route to the admin query detail.
+    void this.#router.navigate(['/admin/queries', id]);
   }
 
   protected statusClass(s: MailStatus): string {

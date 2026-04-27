@@ -1,0 +1,29 @@
+{
+  "query_type": "QUALITY_ISSUE",
+  "kb_article": "KB-012",
+  "team": "quality-assurance",
+  "samples": [
+    {
+      "label": "Path A — defective batch policy question",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "QUALITY_ISSUE",
+        "subject": "Defective batch B-2026-0117 against PO-2026-892 — return / replacement policy?",
+        "description": "Hi QA team, batch B-2026-0117 of cold-rolled steel sheets supplied against PO-2026-892 has shown thickness variance beyond the +/- 0.05 mm tolerance on 23 of 500 units inspected. Could you confirm the formal NCR (non-conformance report) workflow on the portal, the photographs / inspection-report format, and whether replacement vs credit memo is at our discretion under the SILVER-tier contract?",
+        "priority": "HIGH",
+        "reference_number": "B-2026-0117"
+      }
+    },
+    {
+      "label": "Path B — recurring quality complaint (no specific KB hit)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "QUALITY_ISSUE",
+        "subject": "Recurring rust on inbound steel sheets across last 3 dispatches",
+        "description": "Across our last three dispatches (DC-2026-9921, DC-2026-9978, DC-2026-10011) we have observed surface rust on roughly 4-6% of the units, all from the same supplier facility. We suspect the protective oil coating is being skipped during loading. Could quality-assurance investigate at source, share root-cause findings, and propose a corrective-action plan for the next two months of dispatches?",
+        "priority": "CRITICAL",
+        "reference_number": "DC-2026-9921"
+      }
+    }
+  ]
+}

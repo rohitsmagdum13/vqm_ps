@@ -1,0 +1,29 @@
+{
+  "query_type": "TECHNICAL_SUPPORT",
+  "kb_article": "KB-010",
+  "team": "tech-support",
+  "samples": [
+    {
+      "label": "Path A — known portal error / KB-style FAQ",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "TECHNICAL_SUPPORT",
+        "subject": "Portal: 'Session expired' loop after MFA login",
+        "description": "Since this morning, every login on portal.vqms attempts MFA, succeeds, and then immediately throws 'Session expired — please log in again'. Tried Chrome 122 + Edge in incognito with cache cleared. Both my user and our finance lead see the same. Could tech-support confirm whether this is the known JWT-clock-skew issue and the documented workaround?",
+        "priority": "HIGH",
+        "reference_number": null
+      }
+    },
+    {
+      "label": "Path B — niche integration bug (likely KB miss)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "TECHNICAL_SUPPORT",
+        "subject": "SAP IDOC ORDERS05 → VQMS PO sync silently dropping line items > 50",
+        "description": "Our SAP outbound IDOC ORDERS05 is configured to forward purchase orders to VQMS via the PEPPOL connector. Anything with more than 50 line items is being received by VQMS with line items 51-N missing — no error returned, the IDOC shows status 53 on our side. Logs of failed syncs attached separately. Need engineering's input on the PEPPOL chunking config.",
+        "priority": "CRITICAL",
+        "reference_number": null
+      }
+    }
+  ]
+}

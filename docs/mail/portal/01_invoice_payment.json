@@ -1,0 +1,29 @@
+{
+  "query_type": "INVOICE_PAYMENT",
+  "kb_article": "KB-008",
+  "team": "finance-ops",
+  "samples": [
+    {
+      "label": "Path A — payment cycle question (clear KB match)",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "INVOICE_PAYMENT",
+        "subject": "When will invoice INV-SCI-2026-0451 be paid?",
+        "description": "Hi Finance team, I submitted invoice INV-SCI-2026-0451 against PO-2026-892 last Wednesday for INR 1,68,000. Could you confirm which Monday's payment run it falls into and whether our SILVER tier Net 45 terms apply? The PO and the invoice match line for line.",
+        "priority": "MEDIUM",
+        "reference_number": "INV-SCI-2026-0451"
+      }
+    },
+    {
+      "label": "Path B — vague invoice issue (KB miss likely)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "INVOICE_PAYMENT",
+        "subject": "Issue with one of our recent invoices",
+        "description": "We submitted an invoice a while ago and have not seen anything come back. Please look into it on your side and let us know what is happening with our payment. Multiple of our invoices may be affected.",
+        "priority": "HIGH",
+        "reference_number": null
+      }
+    }
+  ]
+}

@@ -29,6 +29,7 @@ import structlog
 from config.settings import Settings
 from models.workflow import PipelineState
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -118,6 +119,16 @@ class QualityGateNode:
                 "redraft_count": 0,
                 "max_redrafts": 2,
             }
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="quality_gate",
+                status="failed",
+                details={
+                    "checks_passed": 0,
+                    "failed_checks": ["no_draft"],
+                },
+            )
             return {
                 "quality_gate_result": gate_result,
                 "status": "DRAFT_REJECTED",
@@ -186,6 +197,17 @@ class QualityGateNode:
                 checks_passed=checks_passed,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="quality_gate",
+                status="success",
+                details={
+                    "checks_passed": checks_passed,
+                    "checks_run": TOTAL_CHECKS,
+                    "failed_checks": [],
+                },
+            )
             return {
                 "quality_gate_result": gate_result,
                 "status": "DELIVERING",
@@ -199,6 +221,17 @@ class QualityGateNode:
                 failed_checks=failed_checks,
                 checks_passed=checks_passed,
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="quality_gate",
+                status="failed",
+                details={
+                    "checks_passed": checks_passed,
+                    "checks_run": TOTAL_CHECKS,
+                    "failed_checks": failed_checks,
+                },
             )
             return {
                 "quality_gate_result": gate_result,

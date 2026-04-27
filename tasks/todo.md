@@ -330,6 +330,21 @@ Gate criteria met:
 - [x] Update README.md — Phase 6 complete, Phase 6 capabilities block, `/webhooks/servicenow` in API table
 - [x] Update tasks/todo.md (this entry)
 
+### Workstream E (post-Phase 6): Follow-up Reply Handling
+
+Vendor sends an initial query email but forgets a PDF / clarifying detail, then replies on the same email thread with the missing info. Pre-fix behaviour: a duplicate query_id, ticket, and LLM run. New behaviour: the reply is merged into the prior open case.
+
+- [x] Migration `017_add_followup_linkage.sql` — `workflow.case_execution.parent_query_id` + `additional_context` (JSONB) + partial index on parent_query_id
+- [x] `src/services/closure.py` — `handle_followup_info()` + `_fetch_case_status` / `_append_additional_context` / `_mark_child_merged` / `_record_followup_audit` / `_add_servicenow_followup_note` helpers; child case marked `MERGED_INTO_PARENT`
+- [x] `src/services/email_intake/service.py` — `_run_closure_detection` now also calls `handle_followup_info` for `EXISTING_OPEN` non-confirmation replies; passes attachment summary
+- [x] `src/adapters/servicenow/ticket_query.py` — new `add_work_note(ticket_id, note_text)` so Path B (`AWAITING_RESOLUTION`) cases get the new info as a work note instead of a second incident
+- [x] `src/orchestration/nodes/context_loading.py` — `_load_additional_context` reads `case_execution.additional_context` and surfaces it on `state["additional_context"]` for Query Analysis
+- [x] `src/models/email.py` — `ParsedEmailPayload.parent_query_id` field
+- [x] `src/models/workflow.py` — `PipelineState.additional_context: list[dict]` + comment update for `MERGED_INTO_PARENT` status
+- [x] Tests: `tests/test_closure_service.py` (handle_followup_info: skip / mid-pipeline / Path B / failure paths), `tests/test_email_intake.py::TestFollowupReplyHandling` (intake-to-closure wiring), `tests/test_context_loading.py` (additional_context surfacing)
+- [x] Update `Flow.md` Step 16.2b
+- [x] Update `tasks/todo.md` (this entry)
+
 ---
 
 ## Current Phase: 7 — Frontend Portal (Angular)

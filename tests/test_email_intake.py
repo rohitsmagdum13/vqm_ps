@@ -597,3 +597,150 @@ class TestThreadCorrelation:
 
         assert result is not None
         assert result.thread_status == "REPLY_TO_CLOSED"
+
+
+# ---------------------------------------------------------------------------
+# Follow-up info handling — EXISTING_OPEN reply that is NOT a confirmation
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_closure_service() -> AsyncMock:
+    """Mock ClosureService for follow-up wiring tests."""
+    svc = AsyncMock()
+    svc.detect_confirmation.return_value = False
+    svc.handle_reopen.return_value = "SKIPPED"
+    svc.handle_followup_info.return_value = "MERGED_MID_PIPELINE"
+    return svc
+
+
+@pytest.fixture
+def email_service_with_closure(
+    mock_graph_api,
+    mock_postgres,
+    mock_s3_connector,
+    mock_sqs_connector,
+    mock_eventbridge_connector,
+    mock_salesforce,
+    mock_settings,
+    mock_closure_service,
+) -> EmailIntakeService:
+    """EmailIntakeService wired with a ClosureService mock so the
+    follow-up branch of _run_closure_detection actually runs."""
+    return EmailIntakeService(
+        graph_api=mock_graph_api,
+        postgres=mock_postgres,
+        s3=mock_s3_connector,
+        sqs=mock_sqs_connector,
+        eventbridge=mock_eventbridge_connector,
+        salesforce=mock_salesforce,
+        settings=mock_settings,
+        closure_service=mock_closure_service,
+    )
+
+
+class TestFollowupReplyHandling:
+    """The vendor replies in the same thread with a missing PDF / extra info.
+
+    Verifies the email_intake → closure_service hand-off:
+      - EXISTING_OPEN that is not a confirmation → handle_followup_info
+        is invoked with the new query_id, body, and attachment summary.
+      - A confirmation reply still short-circuits before the follow-up
+        handler runs (regression).
+      - REPLY_TO_CLOSED still goes through handle_reopen, not the
+        follow-up handler.
+    """
+
+    async def test_existing_open_non_confirmation_calls_handle_followup_info(
+        self,
+        email_service_with_closure,
+        mock_postgres,
+        mock_closure_service,
+    ) -> None:
+        """An open thread + non-confirmation body triggers the merge call."""
+        # Thread correlator fetches the open case row.
+        mock_postgres.fetchrow.return_value = {
+            "query_id": "VQ-PRIOR",
+            "status": "ANALYZING",
+        }
+        mock_closure_service.detect_confirmation.return_value = False
+
+        result = await email_service_with_closure.process_email(
+            "AAMkAGI2TG93AAA="
+        )
+
+        assert result is not None
+        assert result.thread_status == "EXISTING_OPEN"
+        mock_closure_service.handle_followup_info.assert_awaited_once()
+        kwargs = mock_closure_service.handle_followup_info.await_args.kwargs
+        assert kwargs["new_query_id"] == result.query_id
+        assert kwargs["conversation_id"] == "AAQkAGI2TG93conv="
+        # Attachments are summarised (not raw EmailAttachment objects).
+        assert isinstance(kwargs["attachments_summary"], list)
+        assert all(
+            isinstance(a, dict) and "filename" in a
+            for a in kwargs["attachments_summary"]
+        )
+        # Reopen path must NOT fire on EXISTING_OPEN.
+        mock_closure_service.handle_reopen.assert_not_awaited()
+
+    async def test_confirmation_reply_skips_followup_handler(
+        self,
+        email_service_with_closure,
+        mock_postgres,
+        mock_closure_service,
+    ) -> None:
+        """If detect_confirmation returns True, the merge path is skipped."""
+        mock_postgres.fetchrow.return_value = {
+            "query_id": "VQ-PRIOR",
+            "status": "AWAITING_RESOLUTION",
+        }
+        mock_closure_service.detect_confirmation.return_value = True
+
+        await email_service_with_closure.process_email("AAMkAGI2TG93AAA=")
+
+        mock_closure_service.detect_confirmation.assert_awaited_once()
+        mock_closure_service.handle_followup_info.assert_not_awaited()
+        mock_closure_service.handle_reopen.assert_not_awaited()
+
+    async def test_reply_to_closed_skips_followup_handler(
+        self,
+        email_service_with_closure,
+        mock_postgres,
+        mock_closure_service,
+    ) -> None:
+        """REPLY_TO_CLOSED still uses handle_reopen, never handle_followup_info."""
+        mock_postgres.fetchrow.return_value = {
+            "query_id": "VQ-PRIOR",
+            "status": "CLOSED",
+        }
+        mock_closure_service.detect_confirmation.return_value = False
+
+        await email_service_with_closure.process_email("AAMkAGI2TG93AAA=")
+
+        mock_closure_service.handle_reopen.assert_awaited_once()
+        mock_closure_service.handle_followup_info.assert_not_awaited()
+
+    async def test_followup_handler_failure_does_not_break_pipeline(
+        self,
+        email_service_with_closure,
+        mock_postgres,
+        mock_closure_service,
+    ) -> None:
+        """A crash inside handle_followup_info is swallowed (non-critical)."""
+        mock_postgres.fetchrow.return_value = {
+            "query_id": "VQ-PRIOR",
+            "status": "ANALYZING",
+        }
+        mock_closure_service.detect_confirmation.return_value = False
+        mock_closure_service.handle_followup_info.side_effect = RuntimeError(
+            "merge boom"
+        )
+
+        # Pipeline must still return a parsed payload — the email is
+        # already durably persisted, the follow-up merge is best-effort.
+        result = await email_service_with_closure.process_email(
+            "AAMkAGI2TG93AAA="
+        )
+        assert result is not None
+        assert result.thread_status == "EXISTING_OPEN"

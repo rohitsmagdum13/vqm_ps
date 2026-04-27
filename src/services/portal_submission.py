@@ -27,6 +27,7 @@ from models.query import QuerySubmission, UnifiedQueryPayload
 from utils.decorators import log_service_call
 from utils.exceptions import DuplicateQueryError
 from utils.helpers import IdGenerator, TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -216,5 +217,21 @@ class PortalIntakeService:
             query_type=submission.query_type,
             priority=submission.priority,
             correlation_id=correlation_id,
+        )
+
+        # Audit row — first entry on the query's pipeline timeline.
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="intake",
+            action="portal_submitted",
+            status="success",
+            details={
+                "source": "portal",
+                "vendor_id": vendor_id,
+                "query_type": submission.query_type,
+                "priority": submission.priority,
+                "sla_hours": sla_hours,
+            },
         )
         return payload

@@ -1,0 +1,27 @@
+Subject: Vendor portal - 2FA OTP not arriving, account possibly locked
+
+Hi Tech Support Team,
+
+I have been unable to log into the vendor portal since 23 April 2026. The 2-factor authentication OTP is not arriving on my registered mobile number even after multiple attempts.
+
+• Username: rajesh.kumar@technova.io
+• Vendor Code: V-001
+• Registered Mobile: +91-9876543210
+• Last Successful Login: 22 April 2026, 16:45 IST
+• Login Attempts since: ~15 (over 3 days)
+• Browser: Chrome 121, Windows 11
+
+I suspect the account may have been locked after the failed attempts. Could you please:
+1. Confirm the account status (active / locked)
+2. Reset the 2FA enrolment to my email as backup
+3. Share the steps to update the registered mobile number in case the OTP service has my number cached incorrectly
+
+This is blocking me from submitting two pending POs that are due for response today.
+
+Thanks,
+Rajesh Kumar
+TechNova Solutions
+rajesh.kumar@technova.io
+
+---
+Expected routing: TECH-SUPPORT

@@ -1,0 +1,23 @@
+Subject: PO-2026-1234 amendment - quantity increase by 12%
+
+Hi Procurement Team,
+
+Could we please amend Purchase Order PO-2026-1234 to reflect a higher quantity? Our customer order has been revised upward and we need to align the PO before the next dispatch slot on 02 May 2026.
+
+• PO Number: PO-2026-1234
+• Original Quantity: 1,000 units
+• Revised Quantity: 1,120 units (+12%)
+• Item: SKU INV-CT-449 (cold-rolled steel sheets, 3 mm)
+• Original Value: ₹7,80,000
+• Revised Value: ₹8,73,600
+• Vendor Code: V-001
+
+Since this exceeds the 10% auto-approval threshold per Clause 4.2, we understand it will need procurement review and re-approval. Please share the updated PO once amended.
+
+Thanks,
+Dinesh Chauhan
+TechNova Solutions
+dinesh.chauhan@technova.io
+
+---
+Expected routing: PROCUREMENT

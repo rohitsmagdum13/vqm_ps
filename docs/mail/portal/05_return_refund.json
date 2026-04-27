@@ -1,0 +1,29 @@
+{
+  "query_type": "RETURN_REFUND",
+  "kb_article": "KB-001",
+  "team": "finance-ops",
+  "samples": [
+    {
+      "label": "Path A — return process question",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "RETURN_REFUND",
+        "subject": "Return process for damaged units against PO-2026-1188",
+        "description": "Hi team, 12 of the 200 units delivered against PO-2026-1188 (DC-2026-9921) arrived with packaging damage and visible dents. Could you walk us through the return / debit-note process, the credit-memo SLA, and the photographs / RGP we need to attach when raising the return on the portal?",
+        "priority": "HIGH",
+        "reference_number": "DC-2026-9921"
+      }
+    },
+    {
+      "label": "Path B — refund timing without KB-specific facts",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "RETURN_REFUND",
+        "subject": "Refund still not received against credit note CN-2026-0334",
+        "description": "We raised credit note CN-2026-0334 on 2026-03-05 for INR 88,500 against returned items. The credit note was acknowledged but the refund does not appear in our March or April remittance. Please investigate where this got stuck and share an ETA.",
+        "priority": "HIGH",
+        "reference_number": "CN-2026-0334"
+      }
+    }
+  ]
+}

@@ -184,6 +184,65 @@ class TicketQueryMixin:
 
         return ticket.get("work_notes", "")
 
+    @log_service_call
+    async def add_work_note(
+        self,
+        ticket_id: str,
+        note_text: str,
+        *,
+        correlation_id: str = "",
+    ) -> bool:
+        """Append a work note to an existing ServiceNow incident.
+
+        Used by ClosureService.handle_followup_info on Path B
+        (AWAITING_RESOLUTION) cases — when a vendor replies with a
+        missing attachment on a ticket the human team is already
+        investigating, the new info is added as a work note instead
+        of opening a second incident.
+
+        Args:
+            ticket_id: ServiceNow incident number (INC-XXXXXXX).
+            note_text: Free-form note to add. Truncated upstream if needed.
+            correlation_id: Tracing ID.
+
+        Returns:
+            True on success, False if the incident isn't found or the
+            update fails. Failure is non-raising because the caller
+            (closure service) treats this as best-effort.
+        """
+        try:
+            sys_id = await self._find_sys_id(ticket_id)
+            if not sys_id:
+                logger.warning(
+                    "ServiceNow incident not found — work note skipped",
+                    tool="servicenow",
+                    ticket_id=ticket_id,
+                    correlation_id=correlation_id,
+                )
+                return False
+
+            client = self._get_client()
+            url = f"{self._base_url}/api/now/table/incident/{sys_id}"
+            response = await client.patch(url, json={"work_notes": note_text})
+            response.raise_for_status()
+        except Exception:
+            logger.exception(
+                "ServiceNow add_work_note failed",
+                tool="servicenow",
+                ticket_id=ticket_id,
+                correlation_id=correlation_id,
+            )
+            return False
+
+        logger.info(
+            "ServiceNow work note added",
+            tool="servicenow",
+            ticket_id=ticket_id,
+            note_chars=len(note_text),
+            correlation_id=correlation_id,
+        )
+        return True
+
     async def _find_sys_id(self, ticket_id: str) -> str | None:
         """Look up the sys_id for an incident by its number.
 

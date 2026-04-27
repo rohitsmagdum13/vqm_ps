@@ -73,7 +73,11 @@ import { QueryTable } from './query-table';
           <ui-spinner size="lg" label="Loading queries" />
         </div>
       } @else {
-        <app-query-table [rows]="store.filtered()" (open)="openDetail($event)" />
+        <app-query-table
+          [rows]="store.filtered()"
+          [showVendor]="isAdmin()"
+          (open)="openDetail($event)"
+        />
       }
     </section>
   `,
@@ -86,6 +90,7 @@ export class QueriesPage {
   protected readonly statusFilter = signal<QueryStatus | ''>(this.store.statusFilter());
   protected readonly priorityFilter = signal<Priority | ''>(this.store.priorityFilter());
   protected readonly canCreate = computed(() => this.#auth.role() === 'vendor');
+  protected readonly isAdmin = computed(() => this.#auth.role() === 'admin');
 
   constructor() {
     effect(() => this.store.setStatusFilter(this.statusFilter()));
@@ -104,6 +109,7 @@ export class QueriesPage {
   }
 
   protected openDetail(id: string): void {
-    void this.#router.navigate(['/queries', id]);
+    const base = this.#auth.role() === 'admin' ? '/admin/queries' : '/queries';
+    void this.#router.navigate([base, id]);
   }
 }

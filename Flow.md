@@ -725,8 +725,33 @@ Called from `src/services/email_intake/service.py` after thread correlation retu
 | 2 | Lowercase email body, search for any keyword from `settings.confirmation_keywords` | `{"thanks", "thank you", "resolved", "fixed", "that worked", "works now", "appreciate it"}` |
 | 3 | If matched → `close_case(query_id, reason="VENDOR_CONFIRMED")` | Standard closure flow |
 | 4 | If `REPLY_TO_CLOSED` and NOT a confirmation → `handle_reopen(query_id, new_email_payload, correlation_id)` | Reopen logic (inside vs outside window) |
+| 5 | If `EXISTING_OPEN` and NOT a confirmation → `handle_followup_info(conversation_id, new_query_id, body_text, attachments_summary, correlation_id)` | Follow-up reply on a still-open case (vendor sends missing PDF / extra detail) — see Step 16.2b below |
 
 Non-critical: closure detection failure must not block email ingestion.
+
+#### Step 16.2b: handle_followup_info (vendor sends missing info on the same thread)
+
+File: `src/services/closure.py` -> `ClosureService.handle_followup_info()`
+
+The vendor sends an initial query, realises they forgot a PDF (or any required detail), then replies in the same email thread with the missing info. Without this method the reply spawns a duplicate query_id, a second ServiceNow ticket, and a duplicate LLM analysis run. This method merges the reply into the prior case instead.
+
+| Step | Code | What it does |
+|------|------|-------------|
+| 1 | `_find_prior_query_by_conversation(conversation_id)` | Locate the prior `query_id` on the same thread |
+| 2 | `_fetch_case_status(prior_query_id)` | Read `workflow.case_execution.status` |
+| 3 | If status not in `_MERGEABLE_STATUSES` (i.e. RESOLVED / CLOSED / unknown) → return `"SKIPPED"` | Closed cases go through `handle_reopen` instead |
+| 4 | `_append_additional_context(prior_query_id, ...)` | `UPDATE workflow.case_execution SET additional_context = COALESCE(additional_context, '[]'::jsonb) \|\| $1::jsonb` — appends the new body + attachments_summary as a JSON entry on the prior case |
+| 5 | `_mark_child_merged(new_query_id, prior_query_id)` | `UPDATE workflow.case_execution SET status='MERGED_INTO_PARENT', parent_query_id=$1 WHERE query_id=$3` so the child case is marked as merged and traceable |
+| 6 | `_record_followup_audit(...)` | `INSERT INTO audit.action_log (action='FOLLOWUP_INFO_RECEIVED', details=...)` for compliance |
+| 7 | If prior status was `AWAITING_RESOLUTION` (Path B human team) → `_add_servicenow_followup_note(...)` calls `servicenow.add_work_note(ticket_id, note_text)` | Surfaces the new info as a work note on the existing ticket so the team sees it without a second incident |
+| 8 | Returns `"MERGED_MID_PIPELINE"` (statuses RECEIVED/ANALYZING/ROUTING/DRAFTING/VALIDATING/DELIVERING/PAUSED/PENDING_APPROVAL) or `"MERGED_PATH_B"` (AWAITING_RESOLUTION) | Test hook + audit signal |
+
+**Mergeable statuses** (`ClosureService._MERGEABLE_STATUSES`):
+`RECEIVED`, `ANALYZING`, `ROUTING`, `DRAFTING`, `VALIDATING`, `DELIVERING`, `PAUSED` (Path C reviewer parking), `PENDING_APPROVAL` (Path A admin approval), `AWAITING_RESOLUTION` (Path B human team).
+
+**Pickup on the prior case:** `src/orchestration/nodes/context_loading.py` -> `ContextLoadingNode._load_additional_context()` reads the column on the prior case's next pipeline checkpoint and exposes it as `state["additional_context"]` for Query Analysis to fold into its input corpus. The merged corpus reaches the LLM the next time the prior case re-enters Context Loading.
+
+Non-critical at every step. A failure to merge leaves the new query_id flowing through the standard pipeline as a fallback (the legacy behavior — duplicate ticket — is the worst case, never lost data).
 
 #### Step 16.3: close_case (single write path)
 

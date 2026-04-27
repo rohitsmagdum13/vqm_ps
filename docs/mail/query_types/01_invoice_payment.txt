@@ -1,0 +1,21 @@
+Subject: Payment status follow-up - Invoice TN/2026/0234
+
+Dear Accounts Payable Team,
+
+Please share the current payment status of the below invoice. We have not yet received the funds and the due date has passed.
+
+• Invoice Number: TN/2026/0234
+• Invoice Date: 12 February 2026
+• Due Date: 14 March 2026 (Net-30)
+• Amount: ₹2,45,000.00
+• PO Reference: PO-2026-145
+• Vendor Code: V-001
+
+Kindly confirm the expected payment date and the UTR/reference once processed. Happy to share the GST invoice copy again if needed.
+
+Thanks,
+Dinesh Chauhan
+Accounts Manager
+TechNova Solutions
+dinesh.chauhan@technova.io
++91-9123456701

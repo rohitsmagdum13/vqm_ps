@@ -94,3 +94,7 @@ class ParsedEmailPayload(BaseModel):
     attachments: list[EmailAttachment] = Field(default_factory=list, description="Parsed email attachments")
     s3_raw_email_key: str | None = Field(default=None, description="S3 key for the raw .eml file")
     source: Literal["email"] = Field(default="email", description="Entry point — always 'email' for this model")
+    parent_query_id: str | None = Field(
+        default=None,
+        description="Set when this reply was merged into a prior open case (follow-up info handling)",
+    )

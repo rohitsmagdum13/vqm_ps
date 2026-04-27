@@ -32,6 +32,7 @@ from config.settings import Settings
 from events.eventbridge import EventBridgeConnector
 from models.workflow import PipelineState
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -178,6 +179,20 @@ class TriageNode:
             query_id=query_id,
             callback_token=callback_token,
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="triage",
+            action="package_created",
+            status="success",
+            details={
+                "processing_path": "C",
+                "callback_token": callback_token,
+                "confidence_score": analysis_result.get("confidence_score"),
+                "suggested_category": analysis_result.get("suggested_category"),
+            },
         )
 
         return {

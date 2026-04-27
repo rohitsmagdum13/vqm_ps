@@ -1,0 +1,29 @@
+{
+  "query_type": "COMPLIANCE_AUDIT",
+  "kb_article": "KB-009",
+  "team": "legal-compliance",
+  "samples": [
+    {
+      "label": "Path A — annual audit document request",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "COMPLIANCE_AUDIT",
+        "subject": "Documents needed for annual vendor compliance audit FY2026",
+        "description": "Hi Compliance team, we received the audit notice for FY2026. Could you confirm the exact list of documents we need to upload on the portal (ISO certs, GST returns, MSME, EPF/ESIC challans), the upload deadline, and what happens if we miss the cut-off date?",
+        "priority": "MEDIUM",
+        "reference_number": "AUDIT-FY2026"
+      }
+    },
+    {
+      "label": "Path B — niche labour-law clarification (likely KB miss)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "COMPLIANCE_AUDIT",
+        "subject": "Applicability of Maharashtra Shops and Establishments rules to our subcontractors",
+        "description": "We have engaged sub-contractors across two new sites in Pune. Could compliance confirm whether the Maharashtra Shops and Establishments Act amendments dated Jan 2026 require us to register each site separately, or if a master registration on our parent entity is sufficient for the upcoming audit?",
+        "priority": "HIGH",
+        "reference_number": null
+      }
+    }
+  ]
+}

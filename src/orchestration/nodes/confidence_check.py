@@ -18,6 +18,7 @@ import structlog
 from config.settings import Settings
 from models.workflow import PipelineState
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +52,7 @@ class ConfidenceCheckNode:
         analysis_result = state.get("analysis_result", {})
         confidence_score = analysis_result.get("confidence_score", 0.0)
 
+        query_id = state.get("query_id", "")
         if confidence_score >= self._threshold:
             # Continue to routing + KB search
             logger.info(
@@ -60,6 +62,18 @@ class ConfidenceCheckNode:
                 threshold=self._threshold,
                 decision="continue",
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="confidence_check",
+                action="passed",
+                status="success",
+                details={
+                    "confidence_score": confidence_score,
+                    "threshold": self._threshold,
+                    "decision": "continue",
+                },
             )
             return {
                 "updated_at": TimeHelper.ist_now().isoformat(),
@@ -73,6 +87,18 @@ class ConfidenceCheckNode:
                 threshold=self._threshold,
                 decision="path_c",
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="confidence_check",
+                action="redirected_path_c",
+                status="success",
+                details={
+                    "confidence_score": confidence_score,
+                    "threshold": self._threshold,
+                    "decision": "path_c",
+                },
             )
             return {
                 "processing_path": "C",

@@ -22,6 +22,7 @@ from models.memory import KBArticleMatch, KBSearchResult
 from models.workflow import PipelineState
 from utils.exceptions import BedrockTimeoutError
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -65,6 +66,7 @@ class KBSearchNode:
             Updated state with kb_search_result.
         """
         correlation_id = state.get("correlation_id", "")
+        query_id = state.get("query_id", "")
         payload = state.get("unified_payload", {})
         start_time = time.perf_counter()
 
@@ -94,6 +96,13 @@ class KBSearchNode:
                 step="kb_search",
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="kb_search",
+                status="failed",
+                details={"error_type": "embedding_failure", "total_matches": 0},
+            )
             return self._empty_result_state(start_time)
 
         embed_time_ms = int((time.perf_counter() - embed_start) * 1000)
@@ -119,6 +128,13 @@ class KBSearchNode:
                 "pgvector search failed — returning empty KB result (forces Path B)",
                 step="kb_search",
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="kb_search",
+                status="failed",
+                details={"error_type": "pgvector_failure", "total_matches": 0},
             )
             return self._empty_result_state(start_time)
 
@@ -160,6 +176,22 @@ class KBSearchNode:
             embed_time_ms=embed_time_ms,
             search_time_ms=search_time_ms,
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="kb_search",
+            status="success",
+            duration_ms=embed_time_ms + search_time_ms,
+            details={
+                "total_matches": len(matches),
+                "above_threshold": len(above_threshold),
+                "best_score": best_score,
+                "has_sufficient": has_sufficient,
+                "embed_time_ms": embed_time_ms,
+                "search_time_ms": search_time_ms,
+            },
         )
 
         return {

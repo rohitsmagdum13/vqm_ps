@@ -158,3 +158,59 @@ class TestContextLoading:
         assert result["vendor_context"] is not None
         assert result["vendor_context"]["recent_interactions"] == []
         assert result["status"] == "ANALYZING"
+
+    @pytest.mark.asyncio
+    async def test_additional_context_surfaced_when_present(
+        self, context_node, base_state, mock_postgres
+    ) -> None:
+        """Follow-up info appended by ClosureService.handle_followup_info
+        is surfaced into the pipeline state for Query Analysis."""
+        followup_entries = [
+            {
+                "source_query_id": "VQ-2026-0099",
+                "received_at": "2026-04-26T11:00:00+05:30",
+                "body_text": "Sorry, attaching the missing PDF",
+                "attachments": [
+                    {
+                        "filename": "invoice.pdf",
+                        "content_type": "application/pdf",
+                        "size_bytes": 12345,
+                        "s3_key": "attachments/VQ-2026-0099/invoice.pdf",
+                        "extraction_status": "success",
+                    }
+                ],
+            }
+        ]
+        # Cache hit so the vendor branch is exercised, AND follow-up rows present.
+        mock_postgres.cache_read.return_value = {
+            "vendor_id": "V-001",
+            "vendor_name": "TechNova",
+            "tier": {"tier_name": "GOLD", "sla_hours": 8, "priority_multiplier": 1.0},
+            "primary_contact_email": "test@test.com",
+            "is_active": True,
+        }
+        mock_postgres.fetchrow.return_value = {
+            "additional_context": followup_entries
+        }
+
+        result = await context_node.execute(base_state)
+
+        assert result["additional_context"] == followup_entries
+
+    @pytest.mark.asyncio
+    async def test_additional_context_omitted_when_empty(
+        self, context_node, base_state, mock_postgres
+    ) -> None:
+        """No follow-up info → key is absent from result (graph stays terse)."""
+        mock_postgres.cache_read.return_value = {
+            "vendor_id": "V-001",
+            "vendor_name": "TechNova",
+            "tier": {"tier_name": "GOLD", "sla_hours": 8, "priority_multiplier": 1.0},
+            "primary_contact_email": "test@test.com",
+            "is_active": True,
+        }
+        mock_postgres.fetchrow.return_value = None
+
+        result = await context_node.execute(base_state)
+
+        assert "additional_context" not in result

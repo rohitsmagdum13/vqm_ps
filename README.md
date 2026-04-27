@@ -156,33 +156,35 @@ EMAIL_FILTER_USE_LLM_CLASSIFIER=false     # Flip to true to enable Haiku classif
 EMAIL_FILTER_ALLOWED_SENDER_DOMAINS=[]    # Sender domains allowed even when Salesforce can't resolve them
 ```
 
+---
+
+## Commands
+
+All backend commands are run with `uv` (never `pip` directly). Frontend commands use `npx ng` or `npm`. Run these from the project root unless noted.
+
 ### Run the Backend
 
-**Important:** Port 8000 may be occupied by the old `vqm` project. Use port 8002 (or any free port) for this project.
-
 ```bash
-# Terminal 1: Start the backend
 uv run uvicorn main:app --reload --port 8002
 ```
 
-Then open: http://localhost:8002/docs (Swagger UI)
-
-Verify health: `curl http://localhost:8002/health` — should return `"database":"connected"`.
+- Swagger UI: http://localhost:8002/docs
+- Health check: `curl http://localhost:8002/health` — should return `"database":"connected"`
+- Port 8000 may be occupied by the old `vqm` project — use 8002 (or any free port).
 
 ### Run the Frontend
 
-The frontend's API URL is configured in `frontend/src/environments/environment.ts`. Make sure `apiUrl` matches the backend port.
-
 ```bash
-# Terminal 2: Start the frontend
 cd frontend
-npm install          # First time only
-npx ng serve --port 4200
+npm install                    # First time only
+npx ng serve --port 4200       # Or: npm start (defaults to 4200)
 ```
 
 Then open: http://localhost:4200/login
 
-### Run Both (Quick Reference)
+The frontend's API URL is configured in `frontend/src/environments/environment.ts`. Make sure `apiUrl` matches the backend port.
+
+### Run Both (Two Terminals)
 
 ```bash
 # Terminal 1 (backend)
@@ -194,13 +196,63 @@ cd C:\Users\ROHIT\Work\Office\Hex_Proj\Main\vqm_ps\frontend
 npx ng serve --port 4200
 ```
 
-### Run Tests
+### Database Setup
 
 ```bash
-uv run pytest                    # Run all tests
-uv run pytest --cov=src          # With coverage
-uv run ruff check .              # Linting
-cd frontend && npx ng build      # Verify frontend compiles
+uv run python scripts/run_migrations.py        # Apply all SQL migrations (000–010)
+uv run python scripts/seed_admin_user.py       # Create the default admin_user / admin123
+uv run python scripts/seed_knowledge_base.py   # Load KB articles + Titan embeddings into pgvector
+```
+
+### Tests, Linting, Type Checks
+
+```bash
+uv run pytest                                  # Run all backend tests
+uv run pytest --cov=src --cov-report=term-missing  # With coverage report
+uv run pytest tests/test_email_intake.py       # Run a single test file
+uv run pytest -k "test_login"                  # Run tests matching a keyword
+uv run ruff check .                            # Lint backend
+uv run ruff check . --fix                      # Lint + auto-fix
+cd frontend && npx ng build                    # Verify frontend compiles
+cd frontend && npx ng test                     # Run frontend unit tests
+```
+
+### Dependency Management (uv)
+
+```bash
+uv sync                              # Install all backend deps from pyproject.toml
+uv add <package>                     # Add a new package (updates pyproject.toml)
+uv add --dev <package>               # Add a dev-only dependency
+uv remove <package>                  # Remove a package
+uv lock --upgrade                    # Upgrade all packages to latest versions
+```
+
+### Diagnostic / Smoke-Test Scripts (`scripts/`)
+
+```bash
+uv run python scripts/check_db.py                    # Verify SSH tunnel + PostgreSQL connectivity
+uv run python scripts/check_aws_access.py            # Verify AWS credentials (S3, SQS, EventBridge)
+uv run python scripts/check_bedrock.py               # Verify Bedrock model access (Claude + Titan)
+uv run python scripts/check_graphapi.py              # Verify Microsoft Graph API auth + mailbox
+uv run python scripts/check_servicenow.py            # Verify ServiceNow API auth
+uv run python scripts/check_s3_access.py             # Verify S3 bucket access
+uv run python scripts/check_iam_permissions.py       # Audit IAM permissions
+uv run python scripts/check_email_poller.py          # Run one poller cycle and exit
+uv run python scripts/check_embedding.py             # Test Titan embedding call
+uv run python scripts/check_textract.py              # Test Textract OCR
+uv run python scripts/check_thread_correlation.py    # Verify thread correlation logic
+uv run python scripts/check_pipeline_artifacts.py    # List S3 artifacts written by pipeline
+uv run python scripts/list_unread_emails.py          # List unread emails in the mailbox
+uv run python scripts/mark_unread_mails_read.py      # Mark all unread mails as read
+uv run python scripts/smoke_test_email_intake.py     # End-to-end smoke test of email intake
+uv run python scripts/test_email_ingestion.py        # Drive a synthetic email through ingestion
+uv run python scripts/test_portal_submission.py      # POST a synthetic portal query
+uv run python scripts/run_email_to_analysis.py       # Drive intake → query analysis
+uv run python scripts/run_email_to_quality_gate.py   # Drive intake → quality gate
+uv run python scripts/run_pipeline_to_quality_gate.py  # Drive full pipeline up to quality gate
+uv run python scripts/find_vqms_tickets.py           # List VQMS tickets in ServiceNow
+uv run python scripts/inspect_ticket.py <INC-XXXXX>  # Inspect a single ServiceNow ticket
+uv run python scripts/describe_vendor_account.py     # Show Salesforce Vendor_Account__c schema
 ```
 
 ### Test the Full Portal Flow

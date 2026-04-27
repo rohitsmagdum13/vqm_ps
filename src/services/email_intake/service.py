@@ -35,6 +35,7 @@ from services.email_intake.vendor_identifier import VendorIdentifier
 from utils.decorators import log_service_call
 from utils.helpers import IdGenerator, TimeHelper
 from utils.log_types import LOG_TYPE_SERVICE
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -338,10 +339,13 @@ class EmailIntakeService:
         # see the email again, but check_idempotency will skip it.
         await self._mark_read_safe(message_id, correlation_id)
 
-        # Phase 6 closure / reopen detection — non-critical.
-        # A reply landing on an existing thread may be a vendor confirmation
-        # (closes the prior case) or a reopen (inside-window: flip back to
-        # AWAITING_RESOLUTION; outside-window: link new case to prior).
+        # Phase 6 closure / reopen / follow-up detection — non-critical.
+        # A reply landing on an existing thread may be:
+        #   - a vendor confirmation (closes the prior case),
+        #   - a reopen of a closed case (inside-window: flip back to
+        #     AWAITING_RESOLUTION; outside-window: link new case to prior),
+        #   - a follow-up with missing info on a still-open case (merge
+        #     into prior — no duplicate ticket / duplicate LLM run).
         if (
             self._closure_service is not None
             and thread_status in ("EXISTING_OPEN", "REPLY_TO_CLOSED")
@@ -352,6 +356,7 @@ class EmailIntakeService:
                 body_text=body_text,
                 new_query_id=query_id,
                 correlation_id=correlation_id,
+                attachments=attachments,
             )
 
         # Build the full parsed payload for the return value
@@ -385,6 +390,22 @@ class EmailIntakeService:
             thread_status=thread_status,
             attachment_count=len(attachments),
             correlation_id=correlation_id,
+        )
+
+        # Audit row — first entry on the query's pipeline timeline.
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="intake",
+            action="email_processed",
+            status="success",
+            details={
+                "source": "email",
+                "vendor_id": vendor_id,
+                "thread_status": thread_status,
+                "attachment_count": len(attachments),
+                "vendor_match_method": vendor_match_method,
+            },
         )
         return result
 
@@ -533,8 +554,14 @@ class EmailIntakeService:
         body_text: str,
         new_query_id: str,
         correlation_id: str,
+        attachments: list,
     ) -> None:
-        """Hand off confirmation / reopen decisions to ClosureService.
+        """Hand off confirmation / reopen / follow-up decisions to ClosureService.
+
+        The same reply can only ever be one of:
+          - a confirmation ("thanks, resolved")
+          - a reopen of a closed case
+          - a follow-up with missing info on a still-open case
 
         Non-critical: any failure is logged and swallowed so a broken
         closure path cannot roll back successful email ingestion.
@@ -553,7 +580,10 @@ class EmailIntakeService:
             )
             was_confirmation = False
 
-        if thread_status == "REPLY_TO_CLOSED" and not was_confirmation:
+        if was_confirmation:
+            return
+
+        if thread_status == "REPLY_TO_CLOSED":
             try:
                 await self._closure_service.handle_reopen(
                     conversation_id=conversation_id,
@@ -563,6 +593,35 @@ class EmailIntakeService:
             except Exception:
                 logger.warning(
                     "Reopen handling failed — continuing",
+                    new_query_id=new_query_id,
+                    correlation_id=correlation_id,
+                )
+            return
+
+        # EXISTING_OPEN + not a confirmation = the vendor is sending more
+        # info on a query we are still working. Merge into the prior case
+        # so we don't double-ticket / double-analyze.
+        if thread_status == "EXISTING_OPEN":
+            try:
+                await self._closure_service.handle_followup_info(
+                    conversation_id=conversation_id,
+                    new_query_id=new_query_id,
+                    body_text=body_text,
+                    attachments_summary=[
+                        {
+                            "filename": a.filename,
+                            "content_type": a.content_type,
+                            "size_bytes": a.size_bytes,
+                            "s3_key": a.s3_key,
+                            "extraction_status": a.extraction_status,
+                        }
+                        for a in attachments
+                    ],
+                    correlation_id=correlation_id,
+                )
+            except Exception:
+                logger.warning(
+                    "Follow-up info handling failed — continuing",
                     new_query_id=new_query_id,
                     correlation_id=correlation_id,
                 )

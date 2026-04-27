@@ -1,0 +1,27 @@
+Subject: Shipment SHP-2026-3107 delayed 5 days - root cause + compensation per Clause 7.3
+
+Hi Logistics Team,
+
+Shipment SHP-2026-3107 against PO-2026-3107 was promised for 22 April 2026 and is now 5 days late as of 27 April 2026. The carrier mentioned a truck breakdown but has not given us a replacement ETA, and our production line has been waiting since 23 April.
+
+Per Clause 7.3 of our SLA, delays exceeding 48 hours trigger a 2% compensation on the contract value per day. We are not invoking the penalty yet, but we need a few things from your side to close out the incident properly:
+
+1. Root-cause report from the carrier (truck breakdown, what part, why no spare)
+2. Replacement vehicle and confirmed new ETA at our DC in Chennai
+3. Compensation calculation per Clause 7.3 (estimated at ₹19,200 per day = ₹76,800 so far)
+4. Tracking link for the replacement consignment so we can plan dispatch slots
+5. Mitigation plan to avoid repeat — secondary carrier on standby?
+
+• Shipment Number: SHP-2026-3107
+• PO Reference: PO-2026-3107
+• Original Promised Delivery: 22 April 2026
+• Current Delay: 5 days
+• Cargo Value: ₹9,60,000.00
+• Vendor Code: V-002
+
+Please respond within 24 hours so we can communicate updated timelines to our customer.
+
+Regards,
+Anil Verma
+Delta Foods
+anil.verma@deltafoods.com

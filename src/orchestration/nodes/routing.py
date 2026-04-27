@@ -18,6 +18,7 @@ from models.query import QUERY_TYPE_TEAM_MAP
 from models.workflow import PipelineState
 from models.ticket import RoutingDecision, SLATarget
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -172,6 +173,20 @@ class RoutingNode:
             query_id=state.get("query_id", ""),
             correlation_id=correlation_id,
             sla_target_hours=total_hours,
+        )
+
+        await record_node(
+            query_id=state.get("query_id", ""),
+            correlation_id=correlation_id,
+            step_name="routing",
+            status="success",
+            details={
+                "assigned_team": assigned_team,
+                "priority": urgency_level,
+                "sla_hours": total_hours,
+                "category": suggested_category,
+                "vendor_tier": vendor_tier,
+            },
         )
 
         return {

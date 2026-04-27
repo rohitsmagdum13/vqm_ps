@@ -542,3 +542,212 @@ async def test_close_case_skips_servicenow_when_no_ticket_linked(
     )
 
     mock_servicenow.update_ticket_status.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_followup_info — vendor replies on the same thread with missing info
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_missing_args_skips(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+) -> None:
+    """No conversation_id or no new_query_id → nothing to merge."""
+    result = await closure_service.handle_followup_info(
+        conversation_id=None,
+        new_query_id="VQ-NEW",
+        body_text="Sorry, I forgot the PDF",
+        correlation_id="corr-1",
+    )
+    assert result == "SKIPPED"
+    mock_postgres.fetchrow.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_no_prior_case_skips(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+) -> None:
+    """Conversation has no prior query → cannot merge."""
+    mock_postgres.fetchrow.return_value = None
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="more info",
+        correlation_id="corr-1",
+    )
+
+    assert result == "SKIPPED"
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_resolved_case_skips(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+) -> None:
+    """RESOLVED prior case → not mergeable; let handle_reopen handle it."""
+    mock_postgres.fetchrow.side_effect = [
+        {"query_id": "VQ-PRIOR"},  # _find_prior_query_by_conversation
+        {"status": "RESOLVED"},  # _fetch_case_status
+    ]
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="more info",
+        correlation_id="corr-1",
+    )
+
+    assert result == "SKIPPED"
+    # No write happened
+    mock_postgres.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_self_loop_skips(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+) -> None:
+    """Defensive: if the conversation lookup returns the new query_id
+    itself we must not merge a case into itself."""
+    mock_postgres.fetchrow.return_value = {"query_id": "VQ-NEW"}
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="reply body",
+        correlation_id="corr-1",
+    )
+
+    assert result == "SKIPPED"
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_mid_pipeline_appends_context(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+    mock_servicenow: AsyncMock,
+) -> None:
+    """ANALYZING prior case → merge into additional_context, child marked."""
+    mock_postgres.fetchrow.side_effect = [
+        {"query_id": "VQ-PRIOR"},  # _find_prior_query_by_conversation
+        {"status": "ANALYZING"},  # _fetch_case_status
+    ]
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="Sorry, attaching the PDF I forgot",
+        attachments_summary=[
+            {
+                "filename": "invoice.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 12345,
+                "s3_key": "attachments/VQ-NEW/INV.pdf",
+                "extraction_status": "success",
+            }
+        ],
+        correlation_id="corr-1",
+    )
+
+    assert result == "MERGED_MID_PIPELINE"
+
+    update_sqls = [c.args[0] for c in mock_postgres.execute.await_args_list]
+    # additional_context was appended on the prior case
+    assert any(
+        "UPDATE workflow.case_execution" in q
+        and "additional_context" in q
+        for q in update_sqls
+    )
+    # Child query was marked MERGED_INTO_PARENT with parent_query_id set
+    assert any(
+        "MERGED_INTO_PARENT" in q and "parent_query_id" in q
+        for q in update_sqls
+    )
+    # Audit row written
+    assert any(
+        "INSERT INTO audit.action_log" in q
+        for q in update_sqls
+    )
+    # No ServiceNow work note for mid-pipeline
+    mock_servicenow.add_work_note.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_path_b_adds_servicenow_work_note(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+    mock_servicenow: AsyncMock,
+) -> None:
+    """AWAITING_RESOLUTION (Path B) → merge + ServiceNow work note."""
+    mock_postgres.fetchrow.side_effect = [
+        {"query_id": "VQ-PRIOR"},  # _find_prior_query_by_conversation
+        {"status": "AWAITING_RESOLUTION"},  # _fetch_case_status
+        {"ticket_id": "INC-9001"},  # ticket_link lookup for work note
+    ]
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="The missing PO is PO-2026-1234",
+        attachments_summary=[],
+        correlation_id="corr-1",
+    )
+
+    assert result == "MERGED_PATH_B"
+    mock_servicenow.add_work_note.assert_awaited_once()
+    call_args = mock_servicenow.add_work_note.await_args
+    assert call_args.args[0] == "INC-9001"
+    note = call_args.args[1]
+    assert "VQ-NEW" in note
+    assert "PO-2026-1234" in note
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_path_b_skips_worknote_when_no_ticket(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+    mock_servicenow: AsyncMock,
+) -> None:
+    """Path B but no ticket_link row → merge succeeds, work note silently skipped."""
+    mock_postgres.fetchrow.side_effect = [
+        {"query_id": "VQ-PRIOR"},
+        {"status": "AWAITING_RESOLUTION"},
+        None,  # No ticket_link row
+    ]
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="more info",
+        correlation_id="corr-1",
+    )
+
+    assert result == "MERGED_PATH_B"
+    mock_servicenow.add_work_note.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_followup_info_db_failure_skips(
+    closure_service: ClosureService,
+    mock_postgres: AsyncMock,
+) -> None:
+    """If the additional_context UPDATE fails, the merge is reported skipped
+    so the new query keeps flowing through the standard pipeline."""
+    mock_postgres.fetchrow.side_effect = [
+        {"query_id": "VQ-PRIOR"},
+        {"status": "ANALYZING"},
+    ]
+    mock_postgres.execute.side_effect = RuntimeError("db down")
+
+    result = await closure_service.handle_followup_info(
+        conversation_id="conv-1",
+        new_query_id="VQ-NEW",
+        body_text="more info",
+        correlation_id="corr-1",
+    )
+
+    assert result == "SKIPPED"

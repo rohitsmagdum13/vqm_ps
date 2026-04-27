@@ -34,6 +34,7 @@ from models.workflow import PipelineState
 from orchestration.prompts.prompt_manager import PromptManager
 from utils.exceptions import BedrockTimeoutError, LLMProviderError
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -84,6 +85,13 @@ class ResolutionFromNotesNode:
                 step="resolution_from_notes",
                 query_id=query_id,
                 correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="resolution_from_notes",
+                status="failed",
+                details={"error_type": "missing_ticket_number"},
             )
             return {
                 "draft_response": None,
@@ -141,6 +149,16 @@ class ResolutionFromNotesNode:
                 query_id=query_id,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="resolution_from_notes",
+                status="failed",
+                details={
+                    "ticket_number": ticket_number,
+                    "error_type": "llm_or_parse_failure",
+                },
+            )
             return {
                 "draft_response": None,
                 "status": "DRAFT_FAILED",
@@ -171,6 +189,23 @@ class ResolutionFromNotesNode:
             work_notes_length=len(work_notes),
             duration_ms=duration_ms,
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="resolution_from_notes",
+            status="success",
+            duration_ms=duration_ms,
+            details={
+                "ticket_number": ticket_number,
+                "draft_type": "RESOLUTION",
+                "draft_confidence": draft_response["confidence"],
+                "work_notes_length": len(work_notes),
+                "model_id": draft_response["model_id"],
+                "tokens_in": draft_response["tokens_in"],
+                "tokens_out": draft_response["tokens_out"],
+            },
         )
 
         return {

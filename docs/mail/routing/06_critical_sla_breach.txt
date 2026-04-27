@@ -1,0 +1,25 @@
+Subject: PRODUCTION DOWN - Steel shipment under PO-2026-892 not delivered, plant idle since 23 Apr
+
+Hi Logistics / Procurement Team,
+
+OUR PRODUCTION LINE IS IDLE AND HAS BEEN IDLE FOR 48 HOURS. The steel shipment we were promised under the below PO has not arrived and we have had no update since 22 April.
+
+• PO Number: PO-2026-892
+• Item: Cold-rolled steel sheets (50 MT)
+• Promised Delivery: 20 April 2026
+• Today's Date: 25 April 2026 (5 days late)
+• Estimated Production Loss: ₹50,00,000.00 and counting at ₹10 lakh / day
+• Vendor Code: V-011
+
+We need an answer within the next 2 hours or we will escalate to our MD and invoke the penalty clause under Section 7.3 (delay penalty 2% of contract value per day for delays exceeding 48 hours).
+
+This is now a CRITICAL incident on our side. Please prioritise.
+
+Shweta Das
+Plant Operations
+SteelCraft Industries
+shweta.das@steelcraft.com
++91-9005855667
+
+---
+Expected routing: LOGISTICS (or PROCUREMENT depending on rule), priority CRITICAL

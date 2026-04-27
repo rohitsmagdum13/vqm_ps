@@ -10,7 +10,9 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
+from api.routes.admin_drafts import router as admin_drafts_router
 from api.routes.auth import router as auth_router
+from api.routes.copilot_triage import router as copilot_triage_router
 from api.routes.dashboard import router as dashboard_router
 from api.routes.portal_dashboard import router as portal_dashboard_router
 from api.routes.queries import router as queries_router
@@ -28,6 +30,8 @@ def register_routes(application: FastAPI) -> None:
     application.include_router(dashboard_router)
     application.include_router(portal_dashboard_router)
     application.include_router(triage_router)
+    application.include_router(copilot_triage_router)
+    application.include_router(admin_drafts_router)
 
     @application.get("/health", tags=["system"])
     async def health_check():

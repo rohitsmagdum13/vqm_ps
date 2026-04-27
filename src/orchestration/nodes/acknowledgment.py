@@ -32,6 +32,7 @@ from models.workflow import PipelineState
 from orchestration.prompts.prompt_manager import PromptManager
 from utils.exceptions import BedrockTimeoutError, LLMProviderError
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -129,6 +130,16 @@ class AcknowledgmentNode:
                 query_id=query_id,
                 correlation_id=correlation_id,
             )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="acknowledgment",
+                status="failed",
+                details={
+                    "draft_type": "ACKNOWLEDGMENT",
+                    "error_type": "llm_or_parse_failure",
+                },
+            )
             return {
                 "draft_response": None,
                 "status": "DRAFT_FAILED",
@@ -159,6 +170,21 @@ class AcknowledgmentNode:
             confidence=draft_response["confidence"],
             duration_ms=duration_ms,
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            step_name="acknowledgment",
+            status="success",
+            duration_ms=duration_ms,
+            details={
+                "draft_type": "ACKNOWLEDGMENT",
+                "draft_confidence": draft_response["confidence"],
+                "model_id": draft_response["model_id"],
+                "tokens_in": draft_response["tokens_in"],
+                "tokens_out": draft_response["tokens_out"],
+            },
         )
 
         return {

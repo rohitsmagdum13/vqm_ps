@@ -1,0 +1,24 @@
+Subject: Container DEL-MUM-2026-771 stuck at JNPT customs - urgent intervention
+
+Hi Logistics Team,
+
+Our container has been stuck at JNPT customs since 22 April 2026 due to what appears to be incomplete clearance documentation on your side. We need urgent intervention.
+
+• Container Number: DEL-MUM-2026-771
+• Bill of Lading: BL-2026-1145
+• Port of Entry: JNPT, Mumbai
+• Detention Started: 22 April 2026
+• Cargo Value: ₹15,00,000.00
+• Daily Demurrage Cost: ₹8,500
+• Vendor Code: V-008
+
+Please coordinate with your CHA on the missing documents (we suspect it is the country-of-origin certificate). Every additional day costs us in demurrage which we will need to pass on per Clause 7.4.
+
+Regards,
+Deepak Reddy
+SwiftLog Freight
+deepak.reddy@swiftlogfreight.com
++91-9100200300
+
+---
+Expected routing: LOGISTICS, priority HIGH

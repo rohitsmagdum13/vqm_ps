@@ -1,0 +1,27 @@
+Subject: Unexpected charge ₹4,200 on Invoice INV-TN-2026-8821 - line item explanation needed
+
+Dear Accounts Payable Team,
+
+We received Invoice INV-TN-2026-8821 dated 18 April 2026. Most of it matches the PO, but there is a line item we cannot trace back:
+
+"Q1 service adjustment — ₹4,200.00"
+
+This line item does not appear on the original PO-2026-2299 and there is no change order reference attached. Could you please confirm:
+
+1. What this charge is for
+2. Which approver / change order authorised it
+3. Whether it should have been billed against a separate PO
+4. The supporting documentation we should reference for our records
+
+We will hold processing of this invoice for payment until the discrepancy is reconciled. If it turns out to be a valid charge, we will need a corrected invoice with the change order number printed on the line item before we release funds.
+
+• Invoice Number: INV-TN-2026-8821
+• Invoice Date: 18 April 2026
+• PO Reference: PO-2026-2299
+• Vendor Code: V-001
+• Disputed Amount: ₹4,200.00 (out of total ₹85,200.00)
+
+Thanks,
+Dinesh Chauhan
+TechNova Solutions
+dinesh.chauhan@technova.io

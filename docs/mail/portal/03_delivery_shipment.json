@@ -1,0 +1,29 @@
+{
+  "query_type": "DELIVERY_SHIPMENT",
+  "kb_article": "KB-007",
+  "team": "supply-chain",
+  "samples": [
+    {
+      "label": "Path A — shipment tracking + delivery window policy",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "DELIVERY_SHIPMENT",
+        "subject": "Tracking shipment SH-2026-4471 and confirming delivery window",
+        "description": "Hello Supply Chain team, our shipment SH-2026-4471 left our warehouse on 2026-04-22 against PO-2026-892. Could you confirm the standard delivery window for inbound steel shipments, and where we should upload the eway bill / lorry receipt? The truck registration is MH-12-DK-9821.",
+        "priority": "MEDIUM",
+        "reference_number": "SH-2026-4471"
+      }
+    },
+    {
+      "label": "Path B — partial-dispatch question (no clear KB fact)",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "DELIVERY_SHIPMENT",
+        "subject": "Can we split the dispatch for PO-2026-1003 into two consignments?",
+        "description": "We are running short on truck availability this week. Would it be acceptable to split the dispatch for PO-2026-1003 into two consignments — 300 units this Friday and 200 units next Monday? If yes, do you need separate delivery challans, and does it affect our payment cycle?",
+        "priority": "HIGH",
+        "reference_number": "PO-2026-1003"
+      }
+    }
+  ]
+}

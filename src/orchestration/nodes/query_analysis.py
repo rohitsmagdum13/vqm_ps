@@ -35,6 +35,7 @@ from models.workflow import PipelineState
 from orchestration.prompts.prompt_manager import PromptManager
 from utils.exceptions import BedrockTimeoutError, LLMProviderError
 from utils.helpers import TimeHelper
+from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
@@ -144,6 +145,25 @@ class QueryAnalysisNode:
             urgency=analysis_result.urgency_level,
             layer="success",
             correlation_id=correlation_id,
+        )
+
+        await record_node(
+            query_id=state.get("query_id", ""),
+            correlation_id=correlation_id,
+            step_name="query_analysis",
+            status="success",
+            duration_ms=analysis_result.analysis_duration_ms,
+            details={
+                "intent": analysis_result.intent_classification,
+                "urgency": analysis_result.urgency_level,
+                "sentiment": analysis_result.sentiment,
+                "confidence_score": analysis_result.confidence_score,
+                "suggested_category": analysis_result.suggested_category,
+                "multi_issue_detected": analysis_result.multi_issue_detected,
+                "model_id": analysis_result.model_id,
+                "tokens_in": analysis_result.tokens_in,
+                "tokens_out": analysis_result.tokens_out,
+            },
         )
 
         return {

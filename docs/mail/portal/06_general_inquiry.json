@@ -1,0 +1,29 @@
+{
+  "query_type": "GENERAL_INQUIRY",
+  "kb_article": "KB-002",
+  "team": "general-support",
+  "samples": [
+    {
+      "label": "Path A — portal / contact question (clear KB content)",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "GENERAL_INQUIRY",
+        "subject": "Where do I update our company GST and bank details?",
+        "description": "Hi Support, our entity recently changed its registered address and GST number. Where on the VQMS portal do I update the GST registration certificate and bank account details, and do these changes need a re-approval before they apply to outstanding invoices?",
+        "priority": "LOW",
+        "reference_number": null
+      }
+    },
+    {
+      "label": "Path C — too vague, expect triage",
+      "expected_path": "C",
+      "submission": {
+        "query_type": "GENERAL_INQUIRY",
+        "subject": "Question",
+        "description": "Hi, we have a query. Please get back to us when you can.",
+        "priority": "LOW",
+        "reference_number": null
+      }
+    }
+  ]
+}

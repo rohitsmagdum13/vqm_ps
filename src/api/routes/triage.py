@@ -112,18 +112,34 @@ async def list_triage_queue(request: Request, limit: int = 50) -> dict:
     """
     _require_reviewer(request)
 
+    correlation_id = IdGenerator.generate_correlation_id()
+
     triage_service = request.app.state.triage_service
     if triage_service is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Triage service unavailable — check PostgreSQL connection",
+        # Triage service can be None if PostgreSQL was unreachable at
+        # startup. Don't 503 the whole page — return an empty queue so
+        # the UI renders cleanly. The warning log gives ops a signal.
+        logger.warning(
+            "Triage service unavailable — returning empty queue",
+            correlation_id=correlation_id,
         )
+        return {"packages": []}
 
-    correlation_id = IdGenerator.generate_correlation_id()
-    items = await triage_service.list_pending(
-        limit=limit,
-        correlation_id=correlation_id,
-    )
+    try:
+        items = await triage_service.list_pending(
+            limit=limit,
+            correlation_id=correlation_id,
+        )
+    except Exception as exc:
+        # Most common cause: the workflow.triage_packages table doesn't
+        # exist yet (migration 011 not applied). Return an empty queue
+        # with a warning instead of a 500 that breaks the page.
+        logger.warning(
+            "Triage queue query failed — returning empty queue",
+            error=str(exc),
+            correlation_id=correlation_id,
+        )
+        return {"packages": []}
 
     return {"packages": [item.model_dump(mode="json") for item in items]}
 
@@ -144,14 +160,22 @@ async def get_triage_package(request: Request, query_id: str) -> dict:
     """
     _require_reviewer(request)
 
+    correlation_id = IdGenerator.generate_correlation_id()
+
     triage_service = request.app.state.triage_service
     if triage_service is None:
+        # No service = no package. 404 is more useful than 503 here
+        # because the UI handles missing-case gracefully.
+        logger.warning(
+            "Triage service unavailable — treating package as not found",
+            query_id=query_id,
+            correlation_id=correlation_id,
+        )
         raise HTTPException(
-            status_code=503,
-            detail="Triage service unavailable — check PostgreSQL connection",
+            status_code=404,
+            detail=f"Triage package not found: query_id={query_id}",
         )
 
-    correlation_id = IdGenerator.generate_correlation_id()
     try:
         package = await triage_service.get_package(
             query_id,
@@ -159,6 +183,20 @@ async def get_triage_package(request: Request, query_id: str) -> dict:
         )
     except TriagePackageNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        # Likely the triage_packages table is missing or the JSONB
+        # decode failed. Log and surface as 404 so the UI shows a
+        # clear "case not found" instead of a generic 500.
+        logger.warning(
+            "Triage package fetch failed — treating as not found",
+            query_id=query_id,
+            error=str(exc),
+            correlation_id=correlation_id,
+        )
+        raise HTTPException(
+            status_code=404,
+            detail=f"Triage package not available: {exc}",
+        ) from exc
 
     return package.model_dump(mode="json")
 

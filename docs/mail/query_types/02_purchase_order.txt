@@ -1,0 +1,20 @@
+Subject: PO-2026-892 quantity discrepancy vs invoice
+
+Hi Procurement Team,
+
+We have noticed a quantity mismatch between Purchase Order PO-2026-892 and the invoice that we issued against it.
+
+• PO Number: PO-2026-892
+• PO Quantity: 500 units of Item INV-CT-449 (cold-rolled steel sheets, 3 mm)
+• Invoice Number: INV-SCI-2026-0451
+• Invoice Quantity: 480 units
+• Vendor Code: V-011
+• Outstanding Value: ₹1,68,000.00
+
+Could you please reconcile and confirm whether the 20-unit shortfall was a partial dispatch on our side, or if the PO needs to be amended downward? We will hold the next dispatch until this is clarified.
+
+Regards,
+Shweta Das
+SteelCraft Industries
+shweta.das@steelcraft.com
++91-9005855667

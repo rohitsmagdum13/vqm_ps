@@ -33,7 +33,13 @@ export interface Query {
   readonly submitted: string;
   readonly sla: string;
   readonly slaCls: SlaClass;
+  /** "Email" | "Portal" — display label derived from backend `source`. */
   readonly agent: string;
+  /** Vendor that submitted the query. Null on email-path queries that
+   *  failed Salesforce resolution. Used by admin views; vendors don't
+   *  see this column on their own list. Optional so legacy seed/test
+   *  fixtures that pre-date this field still type-check. */
+  readonly vendor?: string | null;
   readonly tl: readonly TimelineStep[];
   readonly ai: string;
   readonly msgs: readonly QueryMessage[];

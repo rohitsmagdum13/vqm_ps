@@ -14,8 +14,12 @@ const VENDOR_NAV: readonly NavItem[] = [
 const ADMIN_NAV: readonly NavItem[] = [
   { id: 'admin-dash', route: '/admin', lbl: 'Dashboard', ico: '📊', badge: null, exact: true },
   { id: 'admin-vendors', route: '/admin/vendors', lbl: 'Vendors', ico: '🏭', badge: null },
-  { id: 'queries', route: '/queries', lbl: 'All Queries', ico: '📋', badge: '12' },
-  { id: 'email', route: '/email', lbl: 'Email', ico: '✉️', badge: null },
+  { id: 'admin-queries', route: '/admin/queries', lbl: 'All Queries', ico: '📋', badge: '12' },
+  { id: 'admin-email', route: '/admin/email', lbl: 'Email', ico: '✉️', badge: null },
+  { id: 'admin-triage', route: '/admin/triage', lbl: 'Triage', ico: '🛂', badge: null },
+  { id: 'admin-path-b', route: '/admin/path-b', lbl: 'Investigations', ico: '🔍', badge: null },
+  { id: 'admin-drafts', route: '/admin/draft-approvals', lbl: 'Drafts', ico: '📝', badge: null },
+  { id: 'admin-ops', route: '/admin/ops', lbl: 'Ops', ico: '🛠️', badge: null },
   { id: 'prefs', route: '/preferences', lbl: 'Settings', ico: '⚙️', badge: null },
 ];
 

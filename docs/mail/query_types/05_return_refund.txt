@@ -1,0 +1,23 @@
+Subject: Return authorization request - Batch BTH-2026-AGR-447 (quality failure)
+
+Dear Quality / AP Team,
+
+We are requesting a Return Material Authorization (RMA) for the below batch which failed our incoming QC test on the moisture-content parameter.
+
+• Batch Number: BTH-2026-AGR-447
+• Material: Premium Wheat Flour, 50 kg bags
+• Quantity Received: 5,000 units (250 MT)
+• Received Date: 18 April 2026
+• Invoice Reference: INV-GLA-2026-0892
+• Invoice Value: ₹4,80,000.00
+• Vendor Code: V-007
+
+QC test result: moisture content 18% against contract spec of max 12%. The full test report is attached as PDF.
+
+Please share the RMA number and pickup arrangement at the earliest. We can provide additional samples for cross-verification if needed.
+
+Best regards,
+Anil Verma
+GreenLeaf Agro
+anil.verma@greenleafagro.in
++91-9234567812

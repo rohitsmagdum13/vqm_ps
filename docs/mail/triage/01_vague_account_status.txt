@@ -1,0 +1,22 @@
+Subject: Need clarity on our situation
+
+Hi team,
+
+We are a bit lost on where things stand with our account currently. Can someone please help us understand what is going on? We have been waiting for some sort of update for a while now and it is getting confusing on our end.
+
+Please get back to us at the earliest. We need clarity ASAP.
+
+Thanks,
+Dinesh Chauhan
+TechNova Solutions
+dinesh.chauhan@technova.io
++91-9123456701
+
+---
+Expected pipeline behaviour:
+- intent_classification: ambiguous (no specific intent words)
+- extracted_entities: {} (no invoice, PO, contract, or amount)
+- single_issue_detection: low (vague language often hides multi-issue)
+- confidence_score: ~0.55–0.65 → Path C
+- processing_path: 'C'
+- Should appear in workflow.triage_packages

@@ -1,0 +1,29 @@
+{
+  "query_type": "SLA_BREACH_REPORT",
+  "kb_article": "KB-006",
+  "team": "sla-compliance",
+  "samples": [
+    {
+      "label": "Path A — escalation policy question",
+      "expected_path": "A",
+      "submission": {
+        "query_type": "SLA_BREACH_REPORT",
+        "subject": "Escalation matrix for repeated SLA breaches",
+        "description": "Hi SLA Compliance team, our open ticket INC0010019 has now crossed the 95% SLA threshold twice in three weeks. Could you confirm the formal escalation matrix that applies under our SILVER-tier contract, who the L2/L3 contacts are, and how we should attach evidence on the portal?",
+        "priority": "HIGH",
+        "reference_number": "INC0010019"
+      }
+    },
+    {
+      "label": "Path B — angry / vague breach complaint",
+      "expected_path": "B",
+      "submission": {
+        "query_type": "SLA_BREACH_REPORT",
+        "subject": "Multiple SLA breaches across our account",
+        "description": "We have been seeing several issues across our open queries with response times slipping. This is impacting us. Please escalate internally and let us know what corrective action is being taken.",
+        "priority": "CRITICAL",
+        "reference_number": null
+      }
+    }
+  ]
+}

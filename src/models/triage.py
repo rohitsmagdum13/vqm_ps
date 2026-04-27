@@ -58,6 +58,10 @@ class TriageQueueItem(BaseModel):
 
     Reviewers see these cards in the queue; they open one to get the
     full TriagePackage for review.
+
+    Some display fields (subject, vendor_id, ai_intent) are surfaced
+    from the stored package_data JSONB so the queue page can render
+    real values without one /triage/{id} fetch per row.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -68,6 +72,16 @@ class TriageQueueItem(BaseModel):
     suggested_category: str | None = Field(default=None, description="AI's suggested category")
     status: str = Field(description="Package status: PENDING or REVIEWED")
     created_at: datetime = Field(description="When the triage package was created (IST)")
+    subject: str | None = Field(
+        default=None, description="Subject from the original query (surfaced from package_data)"
+    )
+    vendor_id: str | None = Field(
+        default=None, description="Vendor ID from the original query (surfaced from package_data)"
+    )
+    ai_intent: str | None = Field(
+        default=None,
+        description="AI intent classification (surfaced from package_data analysis_result)",
+    )
 
 
 class ReviewerDecision(BaseModel):

@@ -1,0 +1,27 @@
+Subject: PO-2026-3107 amendment review - quantity change >10% needs approval
+
+Hi Procurement Team,
+
+We need to amend Purchase Order PO-2026-3107 due to a customer demand revision. Since the change exceeds 10%, we understand it requires formal review and re-approval.
+
+• PO Number: PO-2026-3107
+• Current Quantity: 800 units (Item INV-DF-FRZ-22, frozen vegetables 2 kg pack)
+• Requested Quantity: 920 units (+15%)
+• Current Value: ₹4,80,000.00
+• Revised Value: ₹5,52,000.00
+• Vendor Code: V-002
+• Required Dispatch Window: 05–10 May 2026
+
+What we need from your side:
+1. Confirmation that the +15% quantity increase fits within current procurement budget
+2. Re-approval signatures (procurement lead + finance lead per Clause 4.2)
+3. Updated PO PDF with the amendment line + revised total
+4. Confirmation that delivery slots and warehousing capacity at the receiving end are still ok at the new volume
+
+We will hold the production schedule until the amended PO is in our hands. Happy to jump on a quick call if anything is unclear.
+
+Best,
+Anil Verma
+Delta Foods
+anil.verma@deltafoods.com
++91-9012345678

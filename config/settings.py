@@ -325,6 +325,27 @@ class Settings(BaseSettings):
     # synced yet). Leave empty to reject every unresolved sender.
     email_filter_allowed_sender_domains: list[str] = []
 
+    # ===========================
+    # REVIEWER COPILOT (Path C — MCP server + LangGraph agent)
+    # ===========================
+    # The Reviewer MCP server (src/mcp_servers/reviewer/server.py) listens
+    # on this host:port. The FastAPI copilot route reaches it at the URL
+    # below. Defaults match the launcher (run_reviewer_mcp.py) so a fresh
+    # checkout works without extra env vars.
+    mcp_reviewer_host: str = "127.0.0.1"
+    mcp_reviewer_port: int = 8765
+    mcp_reviewer_url: str = "http://127.0.0.1:8765/mcp"
+
+    # Maximum ReAct loop iterations for the copilot agent. Bumped above
+    # langgraph's default (25) only if vendors regularly need more tool
+    # hops; stays low here so a runaway loop doesn't burn LLM budget.
+    copilot_recursion_limit: int = 12
+
+    # Model for the OpenAI fallback path. Kept separate from
+    # `openai_model_id` (used for general LLM calls) so the copilot can
+    # use a cheaper model without affecting analysis/resolution quality.
+    copilot_openai_model: str = "gpt-4o-mini"
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
