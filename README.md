@@ -248,12 +248,60 @@ uv run python scripts/smoke_test_email_intake.py     # End-to-end smoke test of 
 uv run python scripts/test_email_ingestion.py        # Drive a synthetic email through ingestion
 uv run python scripts/test_portal_submission.py      # POST a synthetic portal query
 uv run python scripts/run_email_to_analysis.py       # Drive intake → query analysis
-uv run python scripts/run_email_to_quality_gate.py   # Drive intake → quality gate
+uv run python scripts/run_email_to_quality_gate.py   # Full pipeline (Phase 1 → Phase 6) on first unread email
 uv run python scripts/run_pipeline_to_quality_gate.py  # Drive full pipeline up to quality gate
 uv run python scripts/find_vqms_tickets.py           # List VQMS tickets in ServiceNow
 uv run python scripts/inspect_ticket.py <INC-XXXXX>  # Inspect a single ServiceNow ticket
 uv run python scripts/describe_vendor_account.py     # Show Salesforce Vendor_Account__c schema
 ```
+
+### Run a Specific Email Through the Full Pipeline
+
+`scripts/run_email_to_quality_gate.py` runs the **complete end-to-end pipeline** in one process: Phase 1 (intake) → Phase 2 (real SQS hop) → Phase 3 (AI pipeline: Steps 7–11) → Phase 4 (delivery: Step 12) → Phase 6 (SLA monitor + closure + episodic memory).
+
+By default it picks the **first unread email** in the mailbox. To run it against a **specific email by message_id**, pass `--message-id`:
+
+```bash
+# Process one specific email by its Microsoft Graph message_id
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..."
+```
+
+Get a valid `message_id` first:
+
+```bash
+uv run python scripts/list_unread_emails.py        # Lists unread emails with their message_id values
+```
+
+Useful flag combinations for `run_email_to_quality_gate.py`:
+
+```bash
+# Real ServiceNow ticket but DO NOT email the vendor (safe dev run)
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..." --no-email-send
+
+# Stop before delivery — no ServiceNow ticket, no email send
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..." --skip-delivery --skip-phase6
+
+# Skip the real SQS hop (use intake payload directly)
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..." --no-sqs-hop
+
+# Skip Salesforce vendor lookup (mock vendor as None)
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..." --skip-salesforce
+
+# Full flow + simulate vendor confirmation (writes episodic_memory row)
+uv run python scripts/run_email_to_quality_gate.py --message-id "AAMkAGI2..." --simulate-close
+```
+
+| Flag | What it does |
+|------|--------------|
+| `--message-id "<id>"` | Process this specific email instead of the first unread one |
+| `--skip-salesforce` | Replace Salesforce connector with a mock (vendor stays unresolved) |
+| `--no-sqs-hop` | Skip the real SQS enqueue/receive — pass payload directly to the graph |
+| `--skip-delivery` | Stub out Step 12 (no ServiceNow ticket, no email send) |
+| `--no-email-send` | Keep ServiceNow ticket creation but stub out Graph API send (no vendor email) |
+| `--skip-phase6` | Skip the SLA monitor / closure tracking / auto-close section |
+| `--simulate-close` | After delivery, call `ClosureService.close_case` (VENDOR_CONFIRMED) to demo episodic memory |
+
+**Prerequisites:** `.env` configured with Graph API + AWS + PostgreSQL + Bedrock (or OpenAI) + ServiceNow credentials, KB seeded (`scripts/seed_knowledge_base.py --clear`), and migration 012 applied.
 
 ### Test the Full Portal Flow
 
