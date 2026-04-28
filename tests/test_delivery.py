@@ -100,25 +100,49 @@ def pipeline_state_delivering() -> dict:
 
 
 class TestDeliverySuccess:
-    """Tests for successful ticket creation and email send."""
+    """Tests for successful ticket creation. Path A halts for admin
+    approval (no email send by Delivery), Path B sends the
+    acknowledgment automatically."""
 
-    async def test_creates_ticket_and_sends_email(
+    async def test_path_a_creates_ticket_does_not_send_email(
         self, delivery_node, pipeline_state_delivering, mock_servicenow, mock_graph
     ) -> None:
-        """Both ticket creation and email send succeed."""
+        """Path A: ticket created, but email is held until admin approves."""
         result = await delivery_node.execute(pipeline_state_delivering)
 
         assert result["ticket_info"] is not None
         assert result["ticket_info"]["ticket_id"] == "INC-0000001"
         mock_servicenow.create_ticket.assert_called_once()
-        mock_graph.send_email.assert_called_once()
+        # Path A halts at PENDING_APPROVAL — DraftApprovalService sends
+        # the email later. Delivery itself must not send.
+        mock_graph.send_email.assert_not_called()
 
-    async def test_path_a_status_resolved(
+    async def test_path_a_status_pending_approval(
         self, delivery_node, pipeline_state_delivering
     ) -> None:
-        """Path A delivery sets status to RESOLVED."""
+        """Path A delivery parks the case at PENDING_APPROVAL."""
         result = await delivery_node.execute(pipeline_state_delivering)
-        assert result["status"] == "RESOLVED"
+        assert result["status"] == "PENDING_APPROVAL"
+
+    async def test_path_a_persists_draft_with_recipient(
+        self, delivery_node, pipeline_state_delivering
+    ) -> None:
+        """Path A returns draft_response stash with recipient + reply-to.
+
+        DraftApprovalService.approve() reads `_recipient_email` and
+        `_reply_to_message_id` to send the approved email, so the
+        Delivery node must include them.
+        """
+        result = await delivery_node.execute(pipeline_state_delivering)
+
+        draft = result["draft_response"]
+        assert draft is not None
+        assert draft["_recipient_email"] == "rajesh.kumar@technova.com"
+        assert draft["_reply_to_message_id"] == "AAMkAGI2TG93AAA="
+        # PENDING placeholder must be stamped with the real INC.
+        assert "INC-0000001" in draft["subject"]
+        assert "PENDING" not in draft["subject"]
+        assert "INC-0000001" in draft["body"]
 
     async def test_path_b_status_awaiting(
         self, delivery_node, pipeline_state_delivering
@@ -130,39 +154,57 @@ class TestDeliverySuccess:
         result = await delivery_node.execute(pipeline_state_delivering)
         assert result["status"] == "AWAITING_RESOLUTION"
 
-    async def test_pending_replaced_in_subject(
+    async def test_path_b_sends_email(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
-        """PENDING placeholder replaced with real INC number in subject."""
+        """Path B sends the acknowledgment automatically."""
+        pipeline_state_delivering["processing_path"] = "B"
+
+        await delivery_node.execute(pipeline_state_delivering)
+
+        mock_graph.send_email.assert_called_once()
+
+    async def test_path_b_pending_replaced_in_subject(
+        self, delivery_node, pipeline_state_delivering, mock_graph
+    ) -> None:
+        """PENDING placeholder replaced with real INC number in subject (Path B)."""
+        pipeline_state_delivering["processing_path"] = "B"
+
         await delivery_node.execute(pipeline_state_delivering)
 
         call_args = mock_graph.send_email.call_args
         assert "INC-0000001" in call_args.kwargs["subject"]
         assert "PENDING" not in call_args.kwargs["subject"]
 
-    async def test_pending_replaced_in_body(
+    async def test_path_b_pending_replaced_in_body(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
-        """PENDING placeholder replaced with real INC number in body."""
+        """PENDING placeholder replaced with real INC number in body (Path B)."""
+        pipeline_state_delivering["processing_path"] = "B"
+
         await delivery_node.execute(pipeline_state_delivering)
 
         call_args = mock_graph.send_email.call_args
         assert "INC-0000001" in call_args.kwargs["body_html"]
         assert "PENDING" not in call_args.kwargs["body_html"]
 
-    async def test_email_sent_to_sender(
+    async def test_path_b_email_sent_to_sender(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
-        """Email sent to the original sender's email address."""
+        """Email sent to the original sender's email address (Path B)."""
+        pipeline_state_delivering["processing_path"] = "B"
+
         await delivery_node.execute(pipeline_state_delivering)
 
         call_args = mock_graph.send_email.call_args
         assert call_args.kwargs["to"] == "rajesh.kumar@technova.com"
 
-    async def test_reply_to_message_id_passed(
+    async def test_path_b_reply_to_message_id_passed(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
-        """reply_to_message_id from payload passed to Graph API."""
+        """reply_to_message_id from payload passed to Graph API (Path B)."""
+        pipeline_state_delivering["processing_path"] = "B"
+
         await delivery_node.execute(pipeline_state_delivering)
 
         call_args = mock_graph.send_email.call_args
@@ -199,12 +241,18 @@ class TestTicketCreationFailure:
 
 
 class TestEmailSendFailure:
-    """Tests for Graph API email send failures."""
+    """Tests for Graph API email send failures.
+
+    Only Path B (and resolution-mode) actually sends from the Delivery
+    node — Path A holds the email for admin approval, so an email
+    failure isn't reachable on that path here. We exercise Path B.
+    """
 
     async def test_email_failure_returns_delivery_failed(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
         """Graph API error results in DELIVERY_FAILED (ticket still created)."""
+        pipeline_state_delivering["processing_path"] = "B"
         mock_graph.send_email.side_effect = GraphAPIError("/sendMail", 500)
 
         result = await delivery_node.execute(pipeline_state_delivering)
@@ -226,13 +274,19 @@ class TestDeliveryEdgeCases:
     async def test_portal_no_sender_email_skips_send(
         self, delivery_node, pipeline_state_delivering, mock_graph
     ) -> None:
-        """Portal submissions without sender_email skip email send."""
+        """Path B portal submissions without sender_email skip email send.
+
+        The vendor_profile in this fixture also has no email_address,
+        so there's nothing to send to. Delivery treats that as a
+        non-fatal skip — ticket is still created, status flips to
+        AWAITING_RESOLUTION, and no Graph API call is made.
+        """
+        pipeline_state_delivering["processing_path"] = "B"
         pipeline_state_delivering["unified_payload"]["sender_email"] = ""
 
         result = await delivery_node.execute(pipeline_state_delivering)
 
-        # Ticket created, email skipped (returns True), status is RESOLVED
-        assert result["status"] == "RESOLVED"
+        assert result["status"] == "AWAITING_RESOLUTION"
         mock_graph.send_email.assert_not_called()
 
     async def test_ticket_request_uses_routing_data(

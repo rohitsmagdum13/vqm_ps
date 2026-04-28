@@ -17,9 +17,16 @@ Behavior (unchanged from the BaseHTTPMiddleware version):
     - Decodes JWT from Authorization header.
     - Sets scope["state"] so downstream handlers can read
       `request.state.username`, `request.state.role`,
-      `request.state.tenant`, `request.state.is_authenticated`.
+      `request.state.tenant`, `request.state.vendor_id`,
+      `request.state.is_authenticated`.
     - Adds X-New-Token response header when the token is near
       expiry (auto-refresh).
+
+vendor_id sourcing:
+    `request.state.vendor_id` comes from the JWT claim, NOT from any
+    HTTP header. Vendor handlers MUST use this value so a vendor cannot
+    spoof another vendor's identity by sending a different X-Vendor-ID
+    header. None for ADMIN/REVIEWER tokens.
 
 Skip paths: /health, /auth/login, /docs, /openapi.json, /redoc, /webhooks/
 """
@@ -86,6 +93,7 @@ class AuthMiddleware:
             state["username"] = None
             state["role"] = None
             state["tenant"] = None
+            state["vendor_id"] = None
             state["is_authenticated"] = False
             await self.app(scope, receive, send)
             return
@@ -105,6 +113,10 @@ class AuthMiddleware:
         state["username"] = payload.sub
         state["role"] = payload.role
         state["tenant"] = payload.tenant
+        # vendor_id is None for ADMIN/REVIEWER, set for VENDOR. The
+        # source of truth is the signed JWT claim — clients cannot
+        # spoof this by sending a different X-Vendor-ID header.
+        state["vendor_id"] = payload.vendor_id
         state["is_authenticated"] = True
 
         # Decide on token refresh before calling downstream. The

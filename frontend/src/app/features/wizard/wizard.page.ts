@@ -243,7 +243,10 @@ export class WizardPage {
     this.#submissionError.set(null);
     this.step.set(4);
 
-    this.#svc.submit(vendorId, payload, this.files()).subscribe({
+    // vendor_id is no longer passed in the request — the backend reads
+    // it from the JWT. We still need vendorId locally to update the
+    // queries store with the right vendor on the optimistic insert.
+    this.#svc.submit(payload, this.files()).subscribe({
       next: (resp) => {
         this.submitting.set(false);
         this.newId.set(resp.query_id);

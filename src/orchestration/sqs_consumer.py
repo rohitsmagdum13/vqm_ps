@@ -13,6 +13,7 @@ On failure, the message stays in the queue and will be retried
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Any
 
 import structlog
@@ -23,6 +24,18 @@ from queues.sqs import SQSConnector
 from utils.helpers import IdGenerator, TimeHelper
 
 logger = structlog.get_logger(__name__)
+
+
+def _to_jsonb_str(value: Any) -> str | None:
+    """Serialize a dict to a JSON string for ::jsonb cast, or return None."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return None
+    try:
+        return json.dumps(value, default=str)
+    except (TypeError, ValueError):
+        return None
 
 
 class PipelineConsumer:
@@ -131,7 +144,88 @@ class PipelineConsumer:
             correlation_id=correlation_id,
         )
 
+        # Persist final pipeline state back to workflow.case_execution.
+        # Until this happens, the row is stuck at status='RECEIVED' with
+        # null analysis/draft, and the admin draft-approval queue stays
+        # empty even after Path A halts. Best-effort — failure here is
+        # logged but does not re-queue the SQS message because the email
+        # may already have gone out (Path B) or the ticket is created.
+        await self._persist_final_state(
+            query_id=query_id,
+            correlation_id=correlation_id,
+            result=result,
+        )
+
         return result
+
+    async def _persist_final_state(
+        self,
+        *,
+        query_id: str,
+        correlation_id: str,
+        result: dict,
+    ) -> None:
+        """Write the pipeline's final state into workflow.case_execution.
+
+        Each LangGraph node returns a slice of state — analysis, routing,
+        draft, ticket, status. The graph merges them into ``result`` but
+        nobody persists them back to PG. This method does that single
+        UPDATE so the admin UI / draft-approval queue / query detail
+        page see the actual outcome of the run.
+
+        Columns updated:
+          - status              : final pipeline status (PENDING_APPROVAL,
+                                  AWAITING_RESOLUTION, RESOLVED, etc.)
+          - processing_path     : 'A', 'B', or 'C'
+          - analysis_result     : JSONB from QueryAnalysisNode
+          - routing_decision    : JSONB from RoutingNode
+          - draft_response      : JSONB stash from DeliveryNode
+                                  (subject + body + recipient)
+          - quality_gate_result : JSONB from QualityGateNode
+          - updated_at          : NOW()
+        """
+        if not query_id:
+            return
+
+        try:
+            await self._postgres.execute(
+                """
+                UPDATE workflow.case_execution
+                SET status              = COALESCE($1, status),
+                    processing_path     = COALESCE($2, processing_path),
+                    analysis_result     = COALESCE($3::jsonb, analysis_result),
+                    routing_decision    = COALESCE($4::jsonb, routing_decision),
+                    draft_response      = COALESCE($5::jsonb, draft_response),
+                    quality_gate_result = COALESCE($6::jsonb, quality_gate_result),
+                    updated_at          = $7
+                WHERE query_id = $8
+                """,
+                result.get("status"),
+                result.get("processing_path"),
+                _to_jsonb_str(result.get("analysis_result")),
+                _to_jsonb_str(result.get("routing_decision")),
+                _to_jsonb_str(result.get("draft_response")),
+                _to_jsonb_str(result.get("quality_gate_result")),
+                TimeHelper.ist_now(),
+                query_id,
+            )
+            logger.info(
+                "case_execution persisted",
+                step="consumer",
+                query_id=query_id,
+                status=result.get("status"),
+                processing_path=result.get("processing_path"),
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist final case_execution state — query "
+                "timeline still shows progress via audit.action_log, but "
+                "draft / status columns will be stale",
+                step="consumer",
+                query_id=query_id,
+                correlation_id=correlation_id,
+            )
 
     async def start_consumer(self, queue_url: str) -> None:
         """Start long-polling loop for a single SQS queue.

@@ -249,6 +249,7 @@ async def authenticate_user(
         user_name=user_row["user_name"],
         role=role,
         tenant=tenant,
+        vendor_id=vendor_id,
     )
 
     logger.info(
@@ -426,8 +427,14 @@ def create_access_token(
     user_name: str,
     role: str,
     tenant: str,
+    vendor_id: str | None = None,
 ) -> str:
-    """Create a signed JWT with user claims."""
+    """Create a signed JWT with user claims.
+
+    `vendor_id` is baked into the token for VENDOR users so request
+    handlers can rely on it from the JWT instead of trusting any
+    client-controlled header. None for ADMIN/REVIEWER.
+    """
     settings = get_settings()
     now = time.time()
 
@@ -435,6 +442,7 @@ def create_access_token(
         "sub": user_name,
         "role": role,
         "tenant": tenant,
+        "vendor_id": vendor_id,
         "exp": now + settings.session_timeout_seconds,
         "iat": now,
         "jti": str(uuid.uuid4()),
@@ -487,6 +495,9 @@ async def validate_token(token: str) -> TokenPayload | None:
         sub=payload["sub"],
         role=payload["role"],
         tenant=payload["tenant"],
+        # vendor_id was added later — old tokens without it stay valid
+        # by defaulting to None.
+        vendor_id=payload.get("vendor_id"),
         exp=payload["exp"],
         iat=payload["iat"],
         jti=payload["jti"],

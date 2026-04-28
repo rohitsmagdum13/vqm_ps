@@ -207,7 +207,11 @@ export class QueriesStore {
     }
     this.#loading.set(true);
     this.#error.set(null);
-    this.#svc.list(isAdmin ? null : vendorId).subscribe({
+    // The backend has split routes — vendors hit /queries (JWT scoped),
+    // admins hit /admin/queries (full set). The QueryService picks the
+    // URL based on the scope arg.
+    const scope = isAdmin ? 'admin' : 'vendor';
+    this.#svc.list(scope).subscribe({
       next: (resp) => {
         this.#queries.set(resp.queries.map(listItemToQuery));
         this.#loading.set(false);
@@ -239,8 +243,8 @@ export class QueriesStore {
     // Reset trail to avoid showing stale events from a previous query.
     this.#trail.set([]);
 
-    const headerVendor = isAdmin ? null : vendorId;
-    this.#svc.get(headerVendor, queryId).subscribe({
+    const scope = isAdmin ? 'admin' : 'vendor';
+    this.#svc.get(scope, queryId).subscribe({
       next: (d) => this.#selected.set(detailToQuery(d)),
       error: (err: unknown) => {
         this.#error.set(errorMessage(err));
@@ -248,7 +252,7 @@ export class QueriesStore {
       },
     });
     // Trail is best-effort — errors here shouldn't blank the detail page.
-    this.#svc.trail(headerVendor, queryId).subscribe({
+    this.#svc.trail(scope, queryId).subscribe({
       next: (resp) => this.#trail.set(resp.events),
       error: () => this.#trail.set([]),
     });

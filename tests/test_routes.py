@@ -15,6 +15,7 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from services.portal_submission import PortalIntakeService
+from api.routes.admin_queries import router as admin_queries_router
 from api.routes.queries import router
 from api.routes.webhooks import router as webhooks_router
 from models.query import UnifiedQueryPayload
@@ -22,11 +23,38 @@ from utils.exceptions import DuplicateQueryError
 from utils.helpers import TimeHelper
 
 
+# Test-only middleware that simulates the production auth middleware.
+# Real middleware decodes the JWT and sets request.state.role and
+# request.state.vendor_id. In tests we let each request control those
+# values via headers so we can exercise both vendor and admin paths
+# without juggling JWTs.
+class _TestAuthMiddleware:
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        state = scope.setdefault("state", {})
+        headers = dict(scope.get("headers", []))
+        role = headers.get(b"x-test-role", b"").decode("latin-1") or None
+        vid = headers.get(b"x-test-vendor-id", b"").decode("latin-1") or None
+        state["role"] = role
+        state["vendor_id"] = vid
+        state["username"] = "tester"
+        state["tenant"] = "hexaware"
+        state["is_authenticated"] = True
+        await self.app(scope, receive, send)
+
+
 @pytest.fixture
 def test_app(mock_postgres, mock_settings) -> FastAPI:
     """Create a test FastAPI app with mocked state."""
     app = FastAPI()
+    app.add_middleware(_TestAuthMiddleware)
     app.include_router(router)
+    app.include_router(admin_queries_router)
     app.include_router(webhooks_router)
 
     # Set up mock connectors on app.state
@@ -58,6 +86,11 @@ def test_app(mock_postgres, mock_settings) -> FastAPI:
     return app
 
 
+# Header shortcuts for the test-only auth middleware.
+VENDOR_HEADERS = {"X-Test-Role": "VENDOR", "X-Test-Vendor-ID": "V-001"}
+ADMIN_HEADERS = {"X-Test-Role": "ADMIN"}
+
+
 @pytest.fixture
 async def client(test_app) -> AsyncClient:
     """Create an async test client."""
@@ -71,9 +104,6 @@ class TestPostQueries:
 
     async def test_submit_returns_201(self, client) -> None:
         """Valid submission returns 201 with query_id."""
-        # POST /queries now expects multipart/form-data: a 'submission'
-        # form field carrying the JSON-encoded QuerySubmission, plus
-        # zero or more file uploads.
         submission = {
             "subject": "Invoice discrepancy for PO-2026-1234",
             "description": (
@@ -86,10 +116,7 @@ class TestPostQueries:
         response = await client.post(
             "/queries",
             data={"submission": json.dumps(submission)},
-            headers={
-                "X-Vendor-ID": "V-001",
-                "X-Correlation-ID": "test-corr-300",
-            },
+            headers={**VENDOR_HEADERS, "X-Correlation-ID": "test-corr-300"},
         )
 
         assert response.status_code == 201
@@ -97,21 +124,19 @@ class TestPostQueries:
         assert data["query_id"] == "VQ-2026-0001"
         assert data["status"] == "RECEIVED"
 
-    async def test_missing_vendor_id_returns_400(self, client) -> None:
-        """Missing X-Vendor-ID header returns 400."""
+    async def test_admin_cannot_submit(self, client) -> None:
+        """ADMIN tokens hitting POST /queries get 403 — submission is vendor-only."""
         submission = {
-            "subject": "Test query subject line",
-            "description": "This is a test description for the query.",
+            "subject": "Admin trying to submit a query",
+            "description": "Admins should not be submitting vendor queries.",
             "query_type": "INVOICE_PAYMENT",
         }
         response = await client.post(
             "/queries",
             data={"submission": json.dumps(submission)},
+            headers=ADMIN_HEADERS,
         )
-
-        # FastAPI's required-Header rejection comes back as 422 by
-        # default; either is acceptable as long as it's not 201.
-        assert response.status_code in (400, 422)
+        assert response.status_code == 403
 
     async def test_invalid_body_returns_422(self, client) -> None:
         """Invalid submission body returns 422 (Pydantic validation)."""
@@ -123,7 +148,7 @@ class TestPostQueries:
         response = await client.post(
             "/queries",
             data={"submission": json.dumps(submission)},
-            headers={"X-Vendor-ID": "V-001"},
+            headers=VENDOR_HEADERS,
         )
 
         assert response.status_code == 422
@@ -142,7 +167,7 @@ class TestPostQueries:
         response = await client.post(
             "/queries",
             data={"submission": json.dumps(submission)},
-            headers={"X-Vendor-ID": "V-001"},
+            headers=VENDOR_HEADERS,
         )
 
         assert response.status_code == 409
@@ -162,15 +187,18 @@ class TestPostQueries:
             "/queries",
             data={"submission": json.dumps(submission)},
             files=files,
-            headers={"X-Vendor-ID": "V-001"},
+            headers=VENDOR_HEADERS,
         )
 
         assert response.status_code == 201
-        # The mocked PortalIntakeService should have received one file.
+        # The mocked PortalIntakeService should have received one file
+        # AND the JWT vendor_id, not anything from the request body.
         call = test_app.state.portal_intake.submit_query.call_args
         assert call.kwargs.get("files") is not None
         assert len(call.kwargs["files"]) == 1
         assert call.kwargs["files"][0].filename == "invoice.pdf"
+        # Second positional arg is vendor_id — must come from JWT, not body.
+        assert call.args[1] == "V-001"
 
 
 class TestGetQueryStatus:
@@ -188,7 +216,7 @@ class TestGetQueryStatus:
 
         response = await client.get(
             "/queries/VQ-2026-0001",
-            headers={"X-Vendor-ID": "V-001"},
+            headers=VENDOR_HEADERS,
         )
 
         assert response.status_code == 200
@@ -202,15 +230,78 @@ class TestGetQueryStatus:
 
         response = await client.get(
             "/queries/VQ-2026-9999",
-            headers={"X-Vendor-ID": "V-001"},
+            headers=VENDOR_HEADERS,
         )
 
         assert response.status_code == 404
 
-    async def test_missing_vendor_id_returns_400(self, client) -> None:
-        """Missing X-Vendor-ID header returns 400."""
+    async def test_no_role_returns_403(self, client) -> None:
+        """Request without a JWT role is rejected — vendor route requires VENDOR."""
         response = await client.get("/queries/VQ-2026-0001")
-        assert response.status_code == 400
+        assert response.status_code == 403
+
+    async def test_admin_cannot_use_vendor_route(self, client) -> None:
+        """ADMIN tokens get 403 on /queries — they should use /admin/queries."""
+        response = await client.get(
+            "/queries/VQ-2026-0001",
+            headers=ADMIN_HEADERS,
+        )
+        assert response.status_code == 403
+
+
+class TestAdminQueries:
+    """Tests for the /admin/queries.* endpoints."""
+
+    async def test_admin_list_returns_all(self, client, mock_postgres) -> None:
+        """ADMIN role can list all queries (no vendor filter)."""
+        mock_postgres.fetch.return_value = [
+            {
+                "query_id": "VQ-2026-0001", "status": "RECEIVED", "source": "portal",
+                "processing_path": None, "vendor_id": "V-001",
+                "created_at": "2026-04-12 10:00:00", "updated_at": "2026-04-12 10:00:00",
+                "subject": "S1", "query_type": "INVOICE_PAYMENT",
+                "priority": "MEDIUM", "reference_number": None, "sla_deadline": None,
+            },
+            {
+                "query_id": "VQ-2026-0002", "status": "RESOLVED", "source": "email",
+                "processing_path": "A", "vendor_id": "V-007",
+                "created_at": "2026-04-13 10:00:00", "updated_at": "2026-04-13 10:00:00",
+                "subject": "S2", "query_type": "CONTRACT_QUERY",
+                "priority": "HIGH", "reference_number": None, "sla_deadline": None,
+            },
+        ]
+
+        response = await client.get("/admin/queries", headers=ADMIN_HEADERS)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["queries"]) == 2
+
+    async def test_vendor_cannot_use_admin_route(self, client) -> None:
+        """VENDOR token on /admin/queries gets 403."""
+        response = await client.get("/admin/queries", headers=VENDOR_HEADERS)
+        assert response.status_code == 403
+
+    async def test_admin_detail_no_ownership_check(
+        self, client, mock_postgres
+    ) -> None:
+        """Admin can fetch any query, even one belonging to a different vendor."""
+        mock_postgres.fetchrow.return_value = {
+            "query_id": "VQ-2026-0001", "status": "RECEIVED", "source": "portal",
+            "processing_path": None, "vendor_id": "V-007",
+            "created_at": "2026-04-12 10:00:00", "updated_at": "2026-04-12 10:00:00",
+            "subject": "S", "query_type": "INVOICE_PAYMENT",
+            "description": "desc",
+            "priority": "MEDIUM", "reference_number": None, "sla_deadline": None,
+        }
+
+        response = await client.get(
+            "/admin/queries/VQ-2026-0001",
+            headers=ADMIN_HEADERS,
+        )
+
+        assert response.status_code == 200
+        assert response.json()["vendor_id"] == "V-007"
 
 
 class TestWebhook:

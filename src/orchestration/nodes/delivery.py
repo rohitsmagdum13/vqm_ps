@@ -158,15 +158,72 @@ class DeliveryNode:
         final_subject = draft.get("subject", "").replace(TICKET_PLACEHOLDER, ticket_id)
         final_body = draft.get("body", "").replace(TICKET_PLACEHOLDER, ticket_id)
 
-        # ----- Phase 3: Send email via Graph API -----
-        # Use vendor_context.email_address first so portal-origin queries
-        # reach the vendor; fall back to the email-thread sender.
+        # Resolve recipient + reply-to once. Used either to send (Path B)
+        # or stashed on the draft for the admin approval service to send
+        # later (Path A). Three sources, in order:
+        #   1. Vendor's official contact email from Salesforce profile
+        #   2. payload.sender_email (top-level — older payload shape)
+        #   3. payload.metadata.sender_email (where EmailIntakeService
+        #      actually puts it today — UnifiedQueryPayload.metadata is
+        #      a free-form dict, sender_email is nested there)
+        metadata = payload.get("metadata") or {}
         recipient = (
-            vendor_profile.get("email_address")
+            vendor_profile.get("primary_contact_email")
             or payload.get("sender_email", "")
+            or metadata.get("sender_email", "")
         )
-        reply_to_id = payload.get("message_id")
+        reply_to_id = (
+            payload.get("message_id")
+            or metadata.get("message_id")
+        )
 
+        # Build the persisted draft snapshot. The leading-underscore
+        # fields are stripped before the admin UI sees them; the
+        # DraftApprovalService reads `_recipient_email` /
+        # `_reply_to_message_id` when sending an approved draft.
+        draft_snapshot = {
+            **draft,
+            "subject": final_subject,
+            "body": final_body,
+            "_recipient_email": recipient,
+            "_reply_to_message_id": reply_to_id,
+        }
+
+        # ----- Path A: halt at PENDING_APPROVAL, do NOT send -----
+        # Per VQMS_Logic_Flow.md, Path A drafts a full reply that an
+        # admin must approve before it leaves the building. The email
+        # is sent later by DraftApprovalService.approve(). The draft
+        # snapshot above carries the recipient + reply-to it needs.
+        if processing_path == "A":
+            logger.info(
+                "Path A draft parked for admin approval",
+                step="delivery",
+                query_id=query_id,
+                ticket_id=ticket_id,
+                recipient_present=bool(recipient),
+                correlation_id=correlation_id,
+            )
+            await record_node(
+                query_id=query_id,
+                correlation_id=correlation_id,
+                step_name="delivery",
+                status="success",
+                details={
+                    "processing_path": "A",
+                    "ticket_id": ticket_id,
+                    "final_status": "PENDING_APPROVAL",
+                    "email_sent": False,
+                    "halted_for_approval": True,
+                },
+            )
+            return {
+                "ticket_info": ticket_info,
+                "draft_response": draft_snapshot,
+                "status": "PENDING_APPROVAL",
+                "updated_at": TimeHelper.ist_now().isoformat(),
+            }
+
+        # ----- Path B: send acknowledgment automatically -----
         email_sent = await self._send_email(
             to=recipient,
             subject=final_subject,
@@ -197,27 +254,17 @@ class DeliveryNode:
             )
             return {
                 "ticket_info": ticket_info,
+                "draft_response": draft_snapshot,
                 "status": "DELIVERY_FAILED",
                 "error": "Graph API email send failed",
                 "updated_at": TimeHelper.ist_now().isoformat(),
             }
 
-        # ----- Phase 4: Set final status -----
-        # Path A: AI resolved, ticket for monitoring → RESOLVED
-        # Path B: Human must investigate → AWAITING_RESOLUTION
-        final_status = "RESOLVED" if processing_path == "A" else "AWAITING_RESOLUTION"
-
-        # Phase 6: Path A sends a terminal resolution email — start the
-        # auto-close timer so ClosureService can auto-close after 5 business
-        # days without a confirmation reply. Path B does not register here;
-        # the Step 15 resolution-mode delivery below registers instead.
-        if processing_path == "A":
-            await self._register_resolution_sent(query_id, correlation_id)
-
         # `email_sent=True` from `_send_email` collapses two outcomes:
         # actually sent vs skipped because no recipient was on file.
         # Surface the distinction on the timeline so admins can tell.
         email_skipped_no_recipient = not bool(recipient)
+        final_status = "AWAITING_RESOLUTION"
         logger.info(
             "Delivery complete",
             step="delivery",
@@ -246,6 +293,7 @@ class DeliveryNode:
 
         return {
             "ticket_info": ticket_info,
+            "draft_response": draft_snapshot,
             "status": final_status,
             "updated_at": TimeHelper.ist_now().isoformat(),
         }
@@ -300,11 +348,18 @@ class DeliveryNode:
         final_body = draft.get("body", "").replace(TICKET_PLACEHOLDER, ticket_id)
 
         vendor_profile = vendor_context.get("vendor_profile", {})
+        # Same three-source resolution as the main delivery path —
+        # vendor profile, top-level payload, then metadata.
+        metadata = payload.get("metadata") or {}
         recipient = (
-            vendor_profile.get("email_address")
+            vendor_profile.get("primary_contact_email")
             or payload.get("sender_email", "")
+            or metadata.get("sender_email", "")
         )
-        reply_to_id = payload.get("message_id")
+        reply_to_id = (
+            payload.get("message_id")
+            or metadata.get("message_id")
+        )
 
         email_sent = await self._send_email(
             to=recipient,

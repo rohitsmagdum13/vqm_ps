@@ -89,11 +89,21 @@ class LoginResponse(BaseModel):
 
 
 class TokenPayload(BaseModel):
-    """Decoded JWT claims structure."""
+    """Decoded JWT claims structure.
+
+    `vendor_id` is the vendor identity baked into the token for VENDOR
+    users — handlers MUST source vendor_id from this claim, not from any
+    client-controlled header, so a vendor cannot spoof another vendor's
+    identity by editing requests. None for ADMIN / REVIEWER roles.
+    """
 
     sub: str = Field(description="Subject — the username")
     role: str = Field(description="User role from tbl_user_roles")
     tenant: str = Field(description="User's tenant/organization")
+    vendor_id: str | None = Field(
+        default=None,
+        description="Vendor ID for VENDOR role; None for ADMIN/REVIEWER",
+    )
     exp: float = Field(description="Expiration time (Unix timestamp)")
     iat: float = Field(description="Issued-at time (Unix timestamp)")
     jti: str = Field(description="JWT ID — UUID for blacklist tracking")

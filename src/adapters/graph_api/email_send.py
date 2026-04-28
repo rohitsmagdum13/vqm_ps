@@ -36,16 +36,54 @@ class EmailSendMixin:
     ) -> None:
         """Send an email via Graph API.
 
+        When ``reply_to_message_id`` is provided, the message is sent via
+        ``/messages/{id}/reply`` so Graph keeps the same conversationId
+        and sets the In-Reply-To / References headers — Gmail and Outlook
+        will then group the response on the original thread instead of
+        starting a new conversation. The ``subject`` argument is ignored
+        on the reply path (Graph reuses the original subject prefixed
+        with "RE:") which is exactly what threaded clients expect.
+
+        When ``reply_to_message_id`` is None (e.g. portal submissions
+        with no inbound email), a standalone /sendMail is used.
+
         Args:
             to: Recipient email address.
-            subject: Email subject.
+            subject: Email subject (used only for fresh sends, not replies).
             body_html: HTML body content.
-            reply_to_message_id: Optional message ID to reply to.
+            reply_to_message_id: Graph internal message ID of the email
+                being replied to. When set, the response is threaded.
             correlation_id: Tracing ID.
 
         Raises:
             GraphAPIError: On API errors.
         """
+        if reply_to_message_id:
+            url = (
+                f"{GRAPH_BASE_URL}/users/{self._mailbox}"
+                f"/messages/{reply_to_message_id}/reply"
+            )
+            await self._request(
+                "POST",
+                url,
+                json_body={
+                    "message": {
+                        "body": {"contentType": "HTML", "content": body_html},
+                        "toRecipients": [{"emailAddress": {"address": to}}],
+                    },
+                    "comment": "",
+                },
+                correlation_id=correlation_id,
+            )
+            logger.info(
+                "Email sent via Graph API (threaded reply)",
+                tool="graph_api",
+                to=to,
+                reply_to_message_id=reply_to_message_id,
+                correlation_id=correlation_id,
+            )
+            return
+
         message = {
             "subject": subject,
             "body": {

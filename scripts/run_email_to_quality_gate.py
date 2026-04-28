@@ -799,23 +799,55 @@ async def run_full_pipeline(
             result("Created At", str(ticket_info.get("created_at", "?")), indent=2)
 
             print("\n  --- Email Send ---")
+            # Pull the recipient stash off the persisted draft snapshot —
+            # DeliveryNode writes _recipient_email there. Empty value
+            # means the pipeline ran but couldn't find an address, in
+            # which case Path B silently skipped the send.
+            draft_snapshot = pipeline_result.get("draft_response") or {}
+            recipient_used = draft_snapshot.get("_recipient_email", "")
+
             if final_status == "DELIVERY_FAILED":
                 result("Send Status", "[FAILED] " + str(pipeline_result.get("error", "")), indent=2)
             elif processing_path == "A":
+                # Path A halts at PENDING_APPROVAL — Delivery does NOT
+                # send; an admin sends later from /admin/draft-approvals.
                 result(
                     "Email Type",
                     "RESOLUTION (full answer -> vendor)",
                     indent=2,
                 )
-                result("Send Status", "[SENT via Graph API]", indent=2)
-                result("Final Status", "RESOLVED (Path A -- ticket for monitoring)", indent=2)
+                result("Send Status", "[HELD for admin approval]", indent=2)
+                result("Recipient (when approved)", recipient_used or "(unresolved)", indent=2)
+                result(
+                    "Final Status",
+                    "PENDING_APPROVAL (admin reviews in /admin/draft-approvals)",
+                    indent=2,
+                )
             elif processing_path == "B":
                 result(
                     "Email Type",
                     "ACKNOWLEDGMENT (no answer -- team investigating)",
                     indent=2,
                 )
-                result("Send Status", "[SENT via Graph API]", indent=2)
+                # Path B auto-sends — distinguish actually-sent from the
+                # silent-skip case so the user knows whether the vendor
+                # got the email or not.
+                if recipient_used:
+                    result("Send Status", "[SENT via Graph API]", indent=2)
+                    result("Recipient", recipient_used, indent=2)
+                else:
+                    result(
+                        "Send Status",
+                        "[SKIPPED] No recipient -- ticket created, no email sent",
+                        indent=2,
+                    )
+                    result(
+                        "Hint",
+                        "Vendor profile has no primary_contact_email AND "
+                        "payload had no sender_email -- check Salesforce "
+                        "or the email's From header",
+                        indent=2,
+                    )
                 result(
                     "Final Status",
                     "AWAITING_RESOLUTION (Path B -- human team investigates)",

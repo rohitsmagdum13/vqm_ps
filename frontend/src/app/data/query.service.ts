@@ -1,4 +1,4 @@
-import { HttpClient, HttpHeaders } from '@angular/common/http';
+import { HttpClient, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import type { Observable } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -101,54 +101,72 @@ export interface QueryTrailResponse {
   readonly events: readonly TimelineEvent[];
 }
 
-function vendorHeader(vendorId: string | null): HttpHeaders | undefined {
-  if (!vendorId) return undefined;
-  return new HttpHeaders({ 'X-Vendor-ID': vendorId });
-}
+/**
+ * Backend has two distinct URL prefixes for queries:
+ *   /queries              — vendor-only routes; the backend reads the
+ *                           vendor identity from the JWT, no header needed
+ *   /admin/queries        — admin-only routes; can scope by ?vendor_id=
+ *
+ * `Scope` selects which prefix the service hits. The backend rejects
+ * cross-role calls (a vendor token hitting /admin/queries gets 403)
+ * so the role check is enforced server-side too.
+ */
+export type QueryScope = 'vendor' | 'admin';
 
 @Injectable({ providedIn: 'root' })
 export class QueryService {
   readonly #http = inject(HttpClient);
-  readonly #base = `${environment.apiBaseUrl}/queries`;
+  readonly #vendorBase = `${environment.apiBaseUrl}/queries`;
+  readonly #adminBase = `${environment.apiBaseUrl}/admin/queries`;
 
-  list(vendorId: string | null): Observable<QueryListResponse> {
-    const headers = vendorHeader(vendorId);
-    return this.#http.get<QueryListResponse>(this.#base, headers ? { headers } : {});
+  /** Pick the URL prefix for the given scope. */
+  #base(scope: QueryScope): string {
+    return scope === 'admin' ? this.#adminBase : this.#vendorBase;
   }
 
+  /** List queries.
+   *
+   * Vendor scope: returns only the JWT vendor's queries (no params).
+   * Admin scope: returns all queries; pass `vendorIdFilter` to scope
+   * the listing to a single vendor.
+   */
+  list(
+    scope: QueryScope,
+    vendorIdFilter: string | null = null,
+  ): Observable<QueryListResponse> {
+    const url = this.#base(scope);
+    if (scope === 'admin' && vendorIdFilter) {
+      const params = new HttpParams().set('vendor_id', vendorIdFilter);
+      return this.#http.get<QueryListResponse>(url, { params });
+    }
+    return this.#http.get<QueryListResponse>(url);
+  }
+
+  /** Submit a new query. Vendors only — admins don't submit. */
   submit(
-    vendorId: string,
     payload: QuerySubmissionPayload,
     files: readonly File[] = [],
   ): Observable<QuerySubmissionResult> {
-    // Backend now accepts multipart/form-data with the structured fields
-    // packed into a single `submission` JSON form field plus 0..N file
-    // parts under the name `files`. We always send multipart so the
-    // request shape stays consistent whether the user attaches files
-    // or not.
+    // Multipart: structured fields go in the `submission` JSON form
+    // field, attachments under `files`. vendor_id comes from the JWT;
+    // there is no longer a header for it.
     const form = new FormData();
     form.append('submission', JSON.stringify(payload));
     for (const f of files) {
       form.append('files', f, f.name);
     }
-    return this.#http.post<QuerySubmissionResult>(this.#base, form, {
-      headers: vendorHeader(vendorId),
-    });
+    return this.#http.post<QuerySubmissionResult>(this.#vendorBase, form);
   }
 
-  get(vendorId: string | null, queryId: string): Observable<QueryDetail> {
-    const headers = vendorHeader(vendorId);
+  get(scope: QueryScope, queryId: string): Observable<QueryDetail> {
     return this.#http.get<QueryDetail>(
-      `${this.#base}/${encodeURIComponent(queryId)}`,
-      headers ? { headers } : {},
+      `${this.#base(scope)}/${encodeURIComponent(queryId)}`,
     );
   }
 
-  trail(vendorId: string | null, queryId: string): Observable<QueryTrailResponse> {
-    const headers = vendorHeader(vendorId);
+  trail(scope: QueryScope, queryId: string): Observable<QueryTrailResponse> {
     return this.#http.get<QueryTrailResponse>(
-      `${this.#base}/${encodeURIComponent(queryId)}/trail`,
-      headers ? { headers } : {},
+      `${this.#base(scope)}/${encodeURIComponent(queryId)}/trail`,
     );
   }
 }
