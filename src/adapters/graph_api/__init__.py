@@ -10,11 +10,24 @@ The GraphAPIConnector class combines:
 
 Re-exports so existing imports like
 ``from adapters.graph_api import GraphAPIConnector`` keep working.
+
+Public re-exports for callers:
+- ``GraphAPIConnector``  — the combined connector class
+- ``OutboundAttachment`` — frozen dataclass used by AdminEmailService
+  to hand attachments to ``send_email``. Re-exported here so callers
+  don't have to reach into ``adapters.graph_api.email_send``.
 """
 
 from adapters.graph_api.client import GraphAPIClient
 from adapters.graph_api.email_fetch import EmailFetchMixin
-from adapters.graph_api.email_send import EmailSendMixin, OutboundAttachment
+from adapters.graph_api.email_send import EmailSendMixin
+
+# Explicit `as` alias signals to linters and type-checkers that this is
+# a deliberate re-export (PEP 484). Keeps the public name stable even if
+# the dataclass moves between submodules later.
+from adapters.graph_api.email_send import (
+    OutboundAttachment as OutboundAttachment,  # noqa: PLC0414
+)
 from adapters.graph_api.webhook import WebhookMixin
 from config.settings import Settings
 
