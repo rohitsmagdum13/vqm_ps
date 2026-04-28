@@ -201,3 +201,67 @@ class LLMProviderError(VQMSError):
             correlation_id=correlation_id,
         )
         self.provider = provider
+
+
+class AdminEmailError(VQMSError):
+    """Raised when an admin email send/reply operation cannot complete.
+
+    Wraps the original failure (Graph error, DB write, etc.) with the
+    outbound_id when one was generated, so the audit row and the API
+    response both reference the same tracking id.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        outbound_id: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        super().__init__(message, correlation_id=correlation_id)
+        self.outbound_id = outbound_id
+
+
+class AdminEmailQueryNotFoundError(VQMSError):
+    """Raised when an admin reply targets a query_id that does not exist
+    or has no inbound email to reply to.
+
+    Returned as 404 (no query) or 422 (no trail) by the route handler.
+    """
+
+    def __init__(
+        self,
+        query_id: str,
+        *,
+        reason: str = "not_found",
+        correlation_id: str | None = None,
+    ) -> None:
+        super().__init__(
+            f"Admin reply target invalid: query_id={query_id} reason={reason}",
+            correlation_id=correlation_id,
+        )
+        self.query_id = query_id
+        self.reason = reason
+
+
+class AttachmentRejectedError(VQMSError):
+    """Raised when one or more attachments fail validation.
+
+    Returned as 422 with the concrete reason ("file too large",
+    "blocked extension", "too many files", etc.).
+    """
+
+    def __init__(
+        self,
+        reason: str,
+        *,
+        filename: str | None = None,
+        correlation_id: str | None = None,
+    ) -> None:
+        super().__init__(
+            f"Attachment rejected: {reason}"
+            + (f" [filename={filename}]" if filename else ""),
+            correlation_id=correlation_id,
+        )
+        self.reason = reason
+        self.filename = filename

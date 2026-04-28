@@ -832,6 +832,65 @@ await auto_close_scheduler.stop()
 
 ---
 
+## Admin Email Send/Reply (Free-form, side-channel)
+
+The AI pipeline drafts and sends most outbound emails (Path A resolution, Path B acknowledgment, Step 15 resolution-from-notes — see "Step 12: Delivery"). Admins can also send or reply to vendor emails directly without going through the pipeline. This is a side-channel — no Quality Gate, no LangGraph, no SLA recompute.
+
+### POST /admin/email/send — fresh email
+
+Trigger: admin posts `multipart/form-data` to `/admin/email/send` with `to`, `subject`, `body_html`, optional `cc`/`bcc`/`vendor_id`/`query_id`/`files[]`. Optional `X-Request-Id` header dedupes replays.
+
+File: `src/api/routes/admin_email.py` -> `send_email()`
+
+1. AuthMiddleware decodes the JWT into `request.state` (CLAUDE.md vendor_id-from-JWT rule applies; ADMIN tokens have vendor_id=None).
+2. `_require_admin(request)` raises 403 unless `request.state.role == "ADMIN"`.
+3. `_split_csv` turns `to`/`cc`/`bcc` form fields into `list[str]`.
+4. Hand off to `AdminEmailService.send(...)`:
+   - `AttachmentValidator.validate(files)` enforces count <= 10, per-file <= 25 MB, total <= 50 MB, no .exe/.bat/.cmd/.ps1/.sh/.js extensions. Failure raises `AttachmentRejectedError` -> 422.
+   - When `query_id` is supplied, `SELECT 1 FROM workflow.case_execution WHERE query_id = $1` -> raises `AdminEmailQueryNotFoundError` -> 404 if missing.
+   - `_payload_hash` SHA-256s the canonical request body (sorted recipients, subject, body, file metadata).
+   - When `client_request_id` is present, `_check_idempotent_replay`:
+     - Same hash + status SENT -> returns the prior `AdminSendResult` with `idempotent_replay=True`, response header `X-Idempotent-Replay: true`. **Vendor receives one email even on double-click.**
+     - Different hash -> `AdminEmailError("...different content")` -> 409.
+     - Status FAILED -> caller proceeds (treats as retry).
+   - `_generate_outbound_id` mints `AOE-2026-NNNN`.
+   - `AttachmentStager.stage(outbound_id, files)` uploads each file to `s3://vqms-data-store/outbound-emails/{outbound_id}/{att_id}_{filename}` and returns `OutboundAttachment` records (bytes still in memory for Graph).
+   - `_insert_outbound_row` opens a single Postgres transaction and inserts:
+     - `intake.admin_outbound_emails` row with `status='QUEUED'` and `payload_hash`.
+     - `intake.admin_outbound_attachments` rows with `upload_status='STAGED'`.
+   - `graph_api.send_email(to=[...], subject, body_html, cc=, bcc=, attachments=[...])`. The adapter picks the inline path (`/sendMail`) when total attachment bytes <= 3 MB, or the upload-session path (`POST /messages` -> `createUploadSession` -> chunked PUT -> `POST /messages/{id}/send`) for larger payloads.
+   - On `GraphAPIError`: `_mark_failed` flips row to `status='FAILED'`, attachments to `upload_status='FAILED'`, captures `last_error`. Audit row written. Re-raises as `AdminEmailError` -> 502.
+   - On success: `_mark_sent` flips to `SENT` + `sent_at`, attachments to `SENT`. `audit.action_log` row inserted with `actor=<admin email>`, `action=admin_email_send`, `details.quality_gate=skipped_admin_actor`.
+5. Route returns 200 with `outbound_id`, recipients, `thread_mode='fresh'`, attachments list, and `idempotent_replay=false`.
+
+### POST /admin/email/queries/{query_id}/reply — threaded reply
+
+Trigger: admin posts `multipart/form-data` to `/admin/email/queries/{query_id}/reply` with `body_html`, optional `cc`/`bcc`/`to_override`/`reply_to_message_id`/`files[]`.
+
+File: `src/api/routes/admin_email.py` -> `reply_to_query()`
+
+1. Auth + admin check + multipart parse (same as `/send`).
+2. `AdminEmailService.reply_to_query(query_id, ...)`:
+   - `_resolve_reply_anchor` runs `SELECT message_id, sender_email, subject, conversation_id, query_id FROM intake.email_messages WHERE query_id = $1 OR conversation_id = (SELECT conversation_id ... LIMIT 1) ORDER BY received_at DESC LIMIT 1`.
+     - No row + case_execution exists -> `reason='no_trail'` -> 422 ("use /admin/email/send instead").
+     - No row + no case_execution -> `reason='not_found'` -> 404.
+     - When `reply_to_message_id_override` is provided, the override row's `conversation_id` (or `query_id` when conv is NULL) must match the latest anchor's, otherwise -> `reason='override_message_in_different_conversation'` -> 422.
+   - `to` defaults to `anchor.sender_email` unless `to_override` provided. `subject` is taken from the anchor (Graph rewrites it with `RE:` on the reply path anyway — we still log it).
+   - Same payload-hash + idempotency + transaction + Graph send flow as `/send`, but `graph_api.send_email(..., reply_to_message_id=anchor.message_id)`. The adapter then calls `POST /messages/{message_id}/reply` (no attachments) or `POST /messages/{message_id}/createReply` -> upload sessions -> `/send` (with attachments). Graph copies the original `conversationId` and sets `In-Reply-To` / `References` headers — vendor's Outlook/Gmail/Apple Mail groups the reply under the same trail.
+   - Audit `action=admin_email_reply` with `reply_to_message_id`, `conversation_id` in details.
+3. Route returns 200 with `outbound_id`, recipients, `thread_mode='reply'`, `reply_to_message_id`, `conversation_id`, attachments, `idempotent_replay`.
+
+### Data model (migration 019)
+
+- `intake.admin_outbound_emails` — outbound_id (PK, AOE-YYYY-NNNN), request_id (idempotency), correlation_id, query_id (nullable), actor, to/cc/bcc JSONB, subject, body_html, thread_mode (`fresh`/`reply`), reply_to_message_id, graph_message_id, payload_hash, status (QUEUED/SENT/FAILED), last_error, sent_at, failed_at, created_at. Unique partial index on `(actor, request_id) WHERE request_id IS NOT NULL` enforces idempotency.
+- `intake.admin_outbound_attachments` — attachment_id (PK), outbound_id (FK, ON DELETE CASCADE), filename, content_type, size_bytes, s3_key, upload_status (STAGED/SENT/FAILED), created_at.
+
+### Why this is a side-channel
+
+Admin sends bypass the Quality Gate (PII / restricted terms / length / source citations) on purpose — admin is a trusted actor and the gate is calibrated for AI-generated drafts. The skip is recorded in `audit.action_log.details.quality_gate=skipped_admin_actor` so compliance review can see it. SLA timers are unaffected: admin replies do NOT call `closure_service.register_resolution_sent` and therefore do not start the auto-close window. To formally resolve a case, use `/admin/drafts/{query_id}/approve` or `/admin/drafts/{query_id}/edit-approve` instead.
+
+---
+
 ## What is not built yet
 
 - Triage reviewer portal UI (Angular) — API is done, reviewer pages still use the vendor portal shell (Phase 7)

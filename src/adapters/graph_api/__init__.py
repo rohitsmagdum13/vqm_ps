@@ -14,7 +14,7 @@ Re-exports so existing imports like
 
 from adapters.graph_api.client import GraphAPIClient
 from adapters.graph_api.email_fetch import EmailFetchMixin
-from adapters.graph_api.email_send import EmailSendMixin
+from adapters.graph_api.email_send import EmailSendMixin, OutboundAttachment
 from adapters.graph_api.webhook import WebhookMixin
 from config.settings import Settings
 
@@ -34,4 +34,4 @@ class GraphAPIConnector(GraphAPIClient, EmailFetchMixin, EmailSendMixin, Webhook
         super().__init__(settings)
 
 
-__all__ = ["GraphAPIConnector"]
+__all__ = ["GraphAPIConnector", "OutboundAttachment"]

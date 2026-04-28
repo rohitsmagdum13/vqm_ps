@@ -307,6 +307,41 @@ async def lifespan(application: FastAPI):
     else:
         application.state.closure_service = None
 
+    # --- Admin Email Service ---
+    # Backs POST /admin/email/send and POST /admin/email/queries/{id}/reply.
+    # Requires postgres (tracking + audit), graph_api (send), and s3
+    # (attachment staging). Without all three the routes return 503 from
+    # _service() and surface a clear "admin email unavailable" message
+    # instead of crashing.
+    if (
+        application.state.postgres is not None
+        and graph_api is not None
+        and application.state.s3 is not None
+    ):
+        try:
+            from services.admin_email import (
+                AdminEmailService,
+                AttachmentStager,
+                AttachmentValidator,
+            )
+
+            stager = AttachmentStager(
+                s3_client=application.state.s3,
+                bucket=settings.s3_bucket_data_store,
+            )
+            application.state.admin_email_service = AdminEmailService(
+                postgres=application.state.postgres,
+                graph_api=graph_api,
+                attachment_stager=stager,
+                attachment_validator=AttachmentValidator(),
+            )
+            logger.info("Admin Email Service ready")
+        except Exception:
+            logger.warning("Admin Email Service init failed", exc_info=True)
+            application.state.admin_email_service = None
+    else:
+        application.state.admin_email_service = None
+
     # --- Draft Approval Service ---
     # Backs the admin draft-approval queue. Path A queries halt at
     # PENDING_APPROVAL after ticket creation; this service lists them,

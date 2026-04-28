@@ -398,6 +398,14 @@ See `docs/api_testing_guide.md` for ready-to-use test examples.
 | `/vendors/{vendor_id}` | PUT | Bearer | Update vendor fields (returns full record) |
 | `/vendors/{vendor_id}` | DELETE | Bearer | Permanently delete a vendor |
 
+### Admin Email Send/Reply (ADMIN only)
+| Endpoint | Method | Auth | Purpose |
+|----------|--------|------|---------|
+| `/admin/email/send` | POST | Bearer (multipart/form-data) | Compose and send a fresh email to one or more vendors. Form fields: `to`, `subject`, `body_html`, optional `cc`/`bcc` (comma-separated), `vendor_id`, `query_id`, `files[]`. Optional `X-Request-Id` header dedupes replays. |
+| `/admin/email/queries/{query_id}/reply` | POST | Bearer (multipart/form-data) | Reply on the existing email trail attached to `query_id`. Vendor receives the reply inside the same Outlook/Gmail conversation as the original — Graph's `/messages/{id}/reply` preserves `conversationId`, In-Reply-To, and References headers. Form fields: `body_html`, optional `cc`/`bcc`, `to_override` (defaults to original sender), `reply_to_message_id` (defaults to latest inbound), `files[]`. |
+
+Tracking: every send creates a row in `intake.admin_outbound_emails` (plus `intake.admin_outbound_attachments` per file) with status `QUEUED -> SENT` (or `FAILED` on Graph error). Audit row written to `audit.action_log` with `actor=<admin email>`, `action=admin_email_send|admin_email_reply`. Quality Gate is intentionally skipped for admin sends (logged with `quality_gate=skipped_admin_actor`).
+
 ### Human Review / Triage (REVIEWER or ADMIN only)
 | Endpoint | Method | Auth | Purpose |
 |----------|--------|------|---------|

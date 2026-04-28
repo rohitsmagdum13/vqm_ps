@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 
 from api.routes.admin_drafts import router as admin_drafts_router
+from api.routes.admin_email import router as admin_email_router
 from api.routes.admin_queries import router as admin_queries_router
 from api.routes.auth import router as auth_router
 from api.routes.copilot_triage import router as copilot_triage_router
@@ -34,6 +35,7 @@ def register_routes(application: FastAPI) -> None:
     application.include_router(triage_router)
     application.include_router(copilot_triage_router)
     application.include_router(admin_drafts_router)
+    application.include_router(admin_email_router)
 
     @application.get("/health", tags=["system"])
     async def health_check():
@@ -58,6 +60,35 @@ def register_routes(application: FastAPI) -> None:
         }
 
 
+def _normalize_binary_fields_for_swagger_ui(node) -> None:
+    """Recursively rewrite OpenAPI 3.1 binary fields into OpenAPI 3.0 form.
+
+    FastAPI/Pydantic 2 emits ``{"type": "string", "contentMediaType":
+    "application/octet-stream"}`` for ``UploadFile`` parameters. That is
+    valid OpenAPI 3.1 but Swagger UI 4.x doesn't recognize it — the
+    field renders as ``array<string>`` with an "Add string item" button
+    instead of a real file picker, and submitting yields a 422
+    "Expected UploadFile, received: <class 'str'>".
+
+    Converting to ``{"type": "string", "format": "binary"}`` (the
+    OpenAPI 3.0 way of expressing the same thing) makes Swagger UI
+    render the file picker correctly. Both forms are accepted by FastAPI
+    on the request side, so this is purely a UI-level rewrite.
+    """
+    if isinstance(node, dict):
+        if (
+            node.get("type") == "string"
+            and node.get("contentMediaType") == "application/octet-stream"
+        ):
+            node.pop("contentMediaType", None)
+            node["format"] = "binary"
+        for value in node.values():
+            _normalize_binary_fields_for_swagger_ui(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_binary_fields_for_swagger_ui(item)
+
+
 def configure_openapi(application: FastAPI) -> None:
     """Configure custom OpenAPI schema with Bearer auth security scheme.
 
@@ -74,7 +105,16 @@ def configure_openapi(application: FastAPI) -> None:
             version=application.version,
             description=application.description,
             routes=application.routes,
+            # Pin OpenAPI to 3.0.2 so Swagger UI renders UploadFile fields
+            # as actual file pickers. OpenAPI 3.1 uses contentMediaType
+            # which Swagger UI 4.x falls back to "array<string>" + "Add
+            # string item" — that breaks our admin email and portal
+            # multipart upload routes.
+            openapi_version="3.0.2",
         )
+
+        # Normalise binary fields so Swagger UI shows a real file picker.
+        _normalize_binary_fields_for_swagger_ui(openapi_schema)
 
         # Add Bearer token security scheme
         openapi_schema["components"]["securitySchemes"] = {
