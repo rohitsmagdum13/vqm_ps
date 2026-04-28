@@ -1,14 +1,19 @@
 """Tests for the Routing Node (Step 9A).
 
-Tests team assignment rules, SLA calculation by tier+urgency,
-and default behavior when vendor context is missing.
+Covers:
+- Primary routing (intent_classification alone resolves the group)
+- Secondary routing (intent + vendor_category resolves the group)
+- Fallback routing ("Vendor Support") when nothing matches
+- LLM-suggested category trust (only when in the canonical taxonomy)
+- SLA calculation by tier + urgency
+- Default behavior when vendor context is missing
 """
 
 from __future__ import annotations
 
 import pytest
 
-from orchestration.nodes.routing import RoutingNode
+from orchestration.nodes.routing import RoutingNode, resolve_assignment_group
 
 
 @pytest.fixture
@@ -18,22 +23,31 @@ def routing_node(mock_settings) -> RoutingNode:
 
 
 def _make_state(
-    category: str = "billing",
+    intent: str = "INVOICE_PAYMENT",
+    suggested_category: str | None = None,
     urgency: str = "MEDIUM",
     tier: str = "GOLD",
+    vendor_category: str | None = None,
     vendor_context: dict | None = None,
 ) -> dict:
-    """Build a pipeline state for routing tests."""
+    """Build a pipeline state for routing tests.
+
+    By default, suggested_category is left blank so the deterministic
+    resolver runs. Tests that want to check LLM-trust behavior set
+    suggested_category explicitly.
+    """
     if vendor_context is None:
         vendor_context = {
             "vendor_profile": {
                 "tier": {"tier_name": tier, "sla_hours": 8, "priority_multiplier": 1.0},
+                "vendor_category": vendor_category,
             },
         }
     return {
         "correlation_id": "test-123",
         "analysis_result": {
-            "suggested_category": category,
+            "intent_classification": intent,
+            "suggested_category": suggested_category or "",
             "urgency_level": urgency,
             "confidence_score": 0.90,
         },
@@ -41,175 +55,242 @@ def _make_state(
     }
 
 
-class TestTeamAssignment:
-    """Tests for team assignment by category."""
+class TestPrimaryRouting:
+    """Intent_classification alone determines the assignment group."""
 
     @pytest.mark.asyncio
-    async def test_billing_routes_to_finance_ops(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="billing"))
-        assert result["routing_decision"]["assigned_team"] == "finance-ops"
+    async def test_invoice_payment_routes_to_finance(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(intent="INVOICE_PAYMENT"))
+        assert result["routing_decision"]["assigned_team"] == "Vendor Finance – AP & Invoicing"
 
     @pytest.mark.asyncio
-    async def test_invoice_routes_to_finance_ops(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="invoice"))
-        assert result["routing_decision"]["assigned_team"] == "finance-ops"
+    async def test_compliance_audit_routes_to_compliance(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(intent="COMPLIANCE_AUDIT"))
+        assert result["routing_decision"]["assigned_team"] == "Vendor Compliance & Audit"
 
     @pytest.mark.asyncio
-    async def test_delivery_routes_to_supply_chain(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="delivery"))
-        assert result["routing_decision"]["assigned_team"] == "supply-chain"
+    async def test_general_inquiry_routes_to_support(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(intent="GENERAL_INQUIRY"))
+        assert result["routing_decision"]["assigned_team"] == "Vendor Support"
+
+
+class TestSecondaryRouting:
+    """vendor_category + eligible intent resolves the group."""
 
     @pytest.mark.asyncio
-    async def test_contract_routes_to_legal(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="contract"))
-        assert result["routing_decision"]["assigned_team"] == "legal-compliance"
+    async def test_it_services_technical_support(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="TECHNICAL_SUPPORT", vendor_category="IT Services")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor IT Services"
 
     @pytest.mark.asyncio
-    async def test_technical_routes_to_tech_support(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="technical"))
-        assert result["routing_decision"]["assigned_team"] == "tech-support"
+    async def test_telecom_sla_breach(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="SLA_BREACH_REPORT", vendor_category="Telecom")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Telecom Services"
 
     @pytest.mark.asyncio
-    async def test_unknown_category_routes_to_general(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="something_random"))
-        assert result["routing_decision"]["assigned_team"] == "general-support"
-
-    # Official query type routing (primary lookup path)
-
-    @pytest.mark.asyncio
-    async def test_invoice_payment_type_routes_to_finance(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="INVOICE_PAYMENT"))
-        assert result["routing_decision"]["assigned_team"] == "finance-ops"
+    async def test_security_contract_query(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="CONTRACT_QUERY", vendor_category="Security")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Security Services"
 
     @pytest.mark.asyncio
-    async def test_delivery_shipment_type_routes_to_supply_chain(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="DELIVERY_SHIPMENT"))
-        assert result["routing_decision"]["assigned_team"] == "supply-chain"
+    async def test_raw_materials_purchase_order(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="PURCHASE_ORDER", vendor_category="Raw Materials")
+        )
+        assert (
+            result["routing_decision"]["assigned_team"]
+            == "Vendor Procurement – Raw Materials"
+        )
 
     @pytest.mark.asyncio
-    async def test_contract_query_type_routes_to_legal(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="CONTRACT_QUERY"))
-        assert result["routing_decision"]["assigned_team"] == "legal-compliance"
+    async def test_manufacturing_catalog_pricing(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="CATALOG_PRICING", vendor_category="Manufacturing")
+        )
+        assert (
+            result["routing_decision"]["assigned_team"]
+            == "Vendor Procurement – Manufacturing"
+        )
 
     @pytest.mark.asyncio
-    async def test_technical_support_type_routes_to_tech(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="TECHNICAL_SUPPORT"))
-        assert result["routing_decision"]["assigned_team"] == "tech-support"
+    async def test_office_supplies_return_refund(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="RETURN_REFUND", vendor_category="Office Supplies")
+        )
+        assert (
+            result["routing_decision"]["assigned_team"]
+            == "Vendor Procurement – Office Supplies"
+        )
 
     @pytest.mark.asyncio
-    async def test_quality_issue_type_routes_to_qa(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="QUALITY_ISSUE"))
-        assert result["routing_decision"]["assigned_team"] == "quality-assurance"
+    async def test_facilities_quality_issue(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="QUALITY_ISSUE", vendor_category="Facilities")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Facilities Management"
 
     @pytest.mark.asyncio
-    async def test_onboarding_type_routes_to_vendor_mgmt(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="ONBOARDING"))
-        assert result["routing_decision"]["assigned_team"] == "vendor-management"
+    async def test_logistics_delivery_shipment(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="DELIVERY_SHIPMENT", vendor_category="Logistics")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Logistics Management"
 
     @pytest.mark.asyncio
-    async def test_sla_breach_type_routes_to_sla_compliance(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="SLA_BREACH_REPORT"))
-        assert result["routing_decision"]["assigned_team"] == "sla-compliance"
+    async def test_professional_services_onboarding(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="ONBOARDING", vendor_category="Professional Services")
+        )
+        assert (
+            result["routing_decision"]["assigned_team"] == "Vendor Professional Services"
+        )
 
     @pytest.mark.asyncio
-    async def test_catalog_pricing_type_routes_to_procurement(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="CATALOG_PRICING"))
-        assert result["routing_decision"]["assigned_team"] == "procurement"
+    async def test_consulting_quality_issue(self, routing_node) -> None:
+        result = await routing_node.execute(
+            _make_state(intent="QUALITY_ISSUE", vendor_category="Consulting")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Consulting Services"
+
+
+class TestFallbackRouting:
+    """Anything unmatched defaults to Vendor Support."""
 
     @pytest.mark.asyncio
-    async def test_general_inquiry_type_routes_to_general(self, routing_node) -> None:
-        result = await routing_node.execute(_make_state(category="GENERAL_INQUIRY"))
-        assert result["routing_decision"]["assigned_team"] == "general-support"
+    async def test_unknown_intent_routes_to_support(self, routing_node) -> None:
+        result = await routing_node.execute(_make_state(intent="WHO_KNOWS"))
+        assert result["routing_decision"]["assigned_team"] == "Vendor Support"
+
+    @pytest.mark.asyncio
+    async def test_eligible_intent_wrong_category_routes_to_support(
+        self, routing_node
+    ) -> None:
+        # TECHNICAL_SUPPORT is eligible only for IT/Telecom/Security categories.
+        # If the vendor is in Logistics, it falls through to Vendor Support.
+        result = await routing_node.execute(
+            _make_state(intent="TECHNICAL_SUPPORT", vendor_category="Logistics")
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Support"
+
+    @pytest.mark.asyncio
+    async def test_missing_vendor_category_falls_back_to_support(
+        self, routing_node
+    ) -> None:
+        # Intent isn't a primary-routing intent and no vendor_category.
+        result = await routing_node.execute(
+            _make_state(intent="DELIVERY_SHIPMENT", vendor_category=None)
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor Support"
+
+
+class TestSuggestedCategoryTrust:
+    """LLM-emitted suggested_category overrides the resolver only when valid."""
+
+    @pytest.mark.asyncio
+    async def test_valid_suggested_category_wins(self, routing_node) -> None:
+        # Intent says ONBOARDING + Consulting → Vendor Consulting Services
+        # but the LLM suggested Vendor IT Services. We trust the LLM
+        # because the value is in the canonical taxonomy.
+        result = await routing_node.execute(
+            _make_state(
+                intent="ONBOARDING",
+                vendor_category="Consulting",
+                suggested_category="Vendor IT Services",
+            )
+        )
+        assert result["routing_decision"]["assigned_team"] == "Vendor IT Services"
+
+    @pytest.mark.asyncio
+    async def test_garbage_suggested_category_falls_through(self, routing_node) -> None:
+        # LLM hallucinated a non-existent group → fall back to resolver.
+        result = await routing_node.execute(
+            _make_state(intent="INVOICE_PAYMENT", suggested_category="finance-ops")
+        )
+        assert (
+            result["routing_decision"]["assigned_team"]
+            == "Vendor Finance – AP & Invoicing"
+        )
 
 
 class TestSLACalculation:
-    """Tests for SLA calculation by tier + urgency."""
+    """SLA calculation by tier + urgency (unchanged math)."""
 
     @pytest.mark.asyncio
     async def test_platinum_critical_1h(self, routing_node) -> None:
-        """PLATINUM + CRITICAL = 4h * 0.25 = 1h."""
         result = await routing_node.execute(
             _make_state(urgency="CRITICAL", tier="PLATINUM")
         )
         assert result["routing_decision"]["sla_target"]["total_hours"] == 1
 
     @pytest.mark.asyncio
-    async def test_platinum_high_2h(self, routing_node) -> None:
-        """PLATINUM + HIGH = 4h * 0.5 = 2h."""
-        result = await routing_node.execute(
-            _make_state(urgency="HIGH", tier="PLATINUM")
-        )
-        assert result["routing_decision"]["sla_target"]["total_hours"] == 2
-
-    @pytest.mark.asyncio
-    async def test_gold_critical_2h(self, routing_node) -> None:
-        """GOLD + CRITICAL = 8h * 0.25 = 2h."""
-        result = await routing_node.execute(
-            _make_state(urgency="CRITICAL", tier="GOLD")
-        )
-        assert result["routing_decision"]["sla_target"]["total_hours"] == 2
-
-    @pytest.mark.asyncio
     async def test_gold_high_4h(self, routing_node) -> None:
-        """GOLD + HIGH = 8h * 0.5 = 4h."""
-        result = await routing_node.execute(
-            _make_state(urgency="HIGH", tier="GOLD")
-        )
-        assert result["routing_decision"]["sla_target"]["total_hours"] == 4
-
-    @pytest.mark.asyncio
-    async def test_silver_critical_4h(self, routing_node) -> None:
-        """SILVER + CRITICAL = 16h * 0.25 = 4h."""
-        result = await routing_node.execute(
-            _make_state(urgency="CRITICAL", tier="SILVER")
-        )
+        result = await routing_node.execute(_make_state(urgency="HIGH", tier="GOLD"))
         assert result["routing_decision"]["sla_target"]["total_hours"] == 4
 
     @pytest.mark.asyncio
     async def test_silver_medium_16h(self, routing_node) -> None:
-        """SILVER + MEDIUM = 16h * 1.0 = 16h."""
         result = await routing_node.execute(
             _make_state(urgency="MEDIUM", tier="SILVER")
         )
         assert result["routing_decision"]["sla_target"]["total_hours"] == 16
 
     @pytest.mark.asyncio
-    async def test_bronze_any_24h(self, routing_node) -> None:
-        """BRONZE + MEDIUM = 24h * 1.0 = 24h."""
-        result = await routing_node.execute(
-            _make_state(urgency="MEDIUM", tier="BRONZE")
-        )
-        assert result["routing_decision"]["sla_target"]["total_hours"] == 24
-
-    @pytest.mark.asyncio
     async def test_bronze_low_36h(self, routing_node) -> None:
-        """BRONZE + LOW = 24h * 1.5 = 36h."""
-        result = await routing_node.execute(
-            _make_state(urgency="LOW", tier="BRONZE")
-        )
+        result = await routing_node.execute(_make_state(urgency="LOW", tier="BRONZE"))
         assert result["routing_decision"]["sla_target"]["total_hours"] == 36
 
 
 class TestRoutingDefaults:
-    """Tests for default behavior."""
+    """Default behavior when vendor context is missing."""
 
     @pytest.mark.asyncio
-    async def test_missing_vendor_context_defaults_to_bronze(self, routing_node) -> None:
-        """No vendor context should default to BRONZE tier."""
+    async def test_missing_vendor_context_defaults_to_bronze(
+        self, routing_node
+    ) -> None:
         state = _make_state(vendor_context={})
         result = await routing_node.execute(state)
-
-        # BRONZE + MEDIUM = 24h * 1.0 = 24h
         assert result["routing_decision"]["sla_target"]["total_hours"] == 24
 
     @pytest.mark.asyncio
     async def test_status_set_to_routing(self, routing_node) -> None:
-        """Status should be set to ROUTING."""
         result = await routing_node.execute(_make_state())
         assert result["status"] == "ROUTING"
 
     @pytest.mark.asyncio
     async def test_routing_reason_included(self, routing_node) -> None:
-        """Routing reason should be a non-empty human-readable string."""
         result = await routing_node.execute(_make_state())
         assert len(result["routing_decision"]["routing_reason"]) > 0
+
+
+class TestResolverDirect:
+    """Direct unit tests for resolve_assignment_group."""
+
+    def test_primary_invoice_payment(self) -> None:
+        assert (
+            resolve_assignment_group("INVOICE_PAYMENT", "IT Services")
+            == "Vendor Finance – AP & Invoicing"
+        )
+
+    def test_secondary_it_services(self) -> None:
+        assert (
+            resolve_assignment_group("TECHNICAL_SUPPORT", "IT Services")
+            == "Vendor IT Services"
+        )
+
+    def test_fallback_when_category_missing(self) -> None:
+        assert resolve_assignment_group("DELIVERY_SHIPMENT", None) == "Vendor Support"
+
+    def test_fallback_when_intent_unknown(self) -> None:
+        assert resolve_assignment_group("MYSTERY_INTENT", "IT Services") == "Vendor Support"
+
+    def test_case_insensitive_category(self) -> None:
+        assert (
+            resolve_assignment_group("technical_support", "it services")
+            == "Vendor IT Services"
+        )

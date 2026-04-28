@@ -47,6 +47,10 @@ class VendorProfile(BaseModel):
     primary_contact_email: str = Field(description="Main contact email address")
     is_active: bool = Field(description="Whether the vendor account is active")
     account_manager: str | None = Field(default=None, description="Assigned account manager name")
+    vendor_category: str | None = Field(
+        default=None,
+        description="Salesforce Category__c — drives secondary routing (IT Services, Logistics, etc.)",
+    )
     cached_at: datetime | None = Field(default=None, description="When this profile was cached (IST)")
     expires_at: datetime | None = Field(default=None, description="Cache expiry time (IST)")
 

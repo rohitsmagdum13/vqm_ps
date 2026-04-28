@@ -38,10 +38,10 @@ An agentic AI platform that automates vendor query resolution for enterprise sup
 - GET /emails/{query_id} — single email chain detail with attachments
 
 **AI Pipeline (LangGraph state machine):**
-- Context loading (vendor profile from Salesforce + episodic memory)
-- Query analysis (LLM Call #1 via Bedrock Claude — 8-layer defense strategy)
+- Context loading (vendor profile from Salesforce + episodic memory). Profile now includes `vendor_category` (Salesforce `Category__c`) so downstream routing can pick a category-specific sub-team. On a cache miss, the freshly fetched profile is written back to `cache.vendor_cache` populating `vendor_name`, `vendor_tier`, `vendor_category` columns alongside the JSONB blob.
+- Query analysis (LLM Call #1 via Bedrock Claude — 8-layer defense strategy). Prompt now receives `vendor_category` and the full primary/secondary/fallback routing-rules table so `suggested_category` aligns with the canonical 13 assignment groups.
 - Confidence check (>= 0.85 continues, < 0.85 routes to Path C)
-- Routing (deterministic rules: team assignment, SLA target)
+- Routing — primary/secondary/fallback resolver maps `(intent_classification, vendor_category)` to one of 13 sub-teams across 6 families: Vendor Support (default fallback), Procurement (Raw Materials / Manufacturing / Office Supplies), IT & Digital (IT Services / Telecom / Security), Facilities & Logistics, Professional & Consulting, Finance & Compliance (AP & Invoicing / Compliance & Audit). The LLM's `suggested_category` is trusted only when it matches the canonical taxonomy; otherwise the deterministic resolver wins.
 - KB search (Titan Embed v2 embeddings, pgvector cosine similarity)
 - Path decision (KB match >= 80% = Path A, otherwise Path B)
 - Resolution drafting — Path A (LLM Call #2: full answer from KB articles)

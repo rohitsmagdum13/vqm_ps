@@ -14,7 +14,6 @@ from __future__ import annotations
 import structlog
 
 from config.settings import Settings
-from models.query import QUERY_TYPE_TEAM_MAP
 from models.workflow import PipelineState
 from models.ticket import RoutingDecision, SLATarget
 from utils.helpers import TimeHelper
@@ -22,43 +21,81 @@ from utils.trail import record_node
 
 logger = structlog.get_logger(__name__)
 
-# Team assignment by official query type (primary lookup)
-# Maps the 12 VQMS query types to their handling teams.
-# Imported from models.query so there is a single source of truth.
+# ---------------------------------------------------------------------------
+# Assignment groups (the 6 family / 13 sub-team taxonomy)
+#
+# These names are the source of truth for what gets written into
+# RoutingDecision.assigned_team and ServiceNow's assignment_group.
+# The LLM is asked to emit the same names in `suggested_category`
+# (see prompts/query_analysis_v1.j2). When the LLM disagrees with
+# the deterministic rules below, the rules win — the LLM output is
+# only a hint, not a source of truth.
+# ---------------------------------------------------------------------------
+DEFAULT_TEAM = "Vendor Support"
 
-# Fallback team assignment by suggested_category keyword
-# Used when the LLM returns a free-text category instead of
-# an official query type (e.g., "billing" instead of "INVOICE_PAYMENT").
-CATEGORY_TEAM_MAP: dict[str, str] = {
-    "billing": "finance-ops",
-    "invoice": "finance-ops",
-    "payment": "finance-ops",
-    "return": "finance-ops",
-    "refund": "finance-ops",
-    "delivery": "supply-chain",
-    "shipping": "supply-chain",
-    "logistics": "supply-chain",
-    "shipment": "supply-chain",
-    "contract": "legal-compliance",
-    "agreement": "legal-compliance",
-    "terms": "legal-compliance",
-    "legal": "legal-compliance",
-    "compliance": "legal-compliance",
-    "audit": "legal-compliance",
-    "technical": "tech-support",
-    "integration": "tech-support",
-    "api": "tech-support",
-    "product": "tech-support",
-    "catalog": "procurement",
-    "pricing": "procurement",
-    "purchase": "procurement",
-    "onboarding": "vendor-management",
-    "quality": "quality-assurance",
-    "defect": "quality-assurance",
-    "sla": "sla-compliance",
+# Primary routing — intent_classification alone determines the group.
+# These intents are unambiguous and don't need vendor_category to route.
+PRIMARY_INTENT_TEAMS: dict[str, str] = {
+    "INVOICE_PAYMENT": "Vendor Finance – AP & Invoicing",
+    "COMPLIANCE_AUDIT": "Vendor Compliance & Audit",
+    "GENERAL_INQUIRY": "Vendor Support",
 }
 
-DEFAULT_TEAM = "general-support"
+# Secondary routing — vendor_category + eligible intent types map to a
+# specific sub-team. Each row: (normalized vendor_category, eligible intents,
+# group name).
+SECONDARY_ROUTING: list[tuple[str, frozenset[str], str]] = [
+    # IT & Digital Services
+    ("it services", frozenset({"TECHNICAL_SUPPORT", "SLA_BREACH_REPORT", "DELIVERY_SHIPMENT", "CONTRACT_QUERY"}), "Vendor IT Services"),
+    ("telecom", frozenset({"TECHNICAL_SUPPORT", "SLA_BREACH_REPORT", "DELIVERY_SHIPMENT", "CONTRACT_QUERY"}), "Vendor Telecom Services"),
+    ("security", frozenset({"TECHNICAL_SUPPORT", "SLA_BREACH_REPORT", "DELIVERY_SHIPMENT", "CONTRACT_QUERY"}), "Vendor Security Services"),
+    # Procurement & Supply Chain
+    ("raw materials", frozenset({"PURCHASE_ORDER", "CONTRACT_QUERY", "CATALOG_PRICING", "RETURN_REFUND"}), "Vendor Procurement – Raw Materials"),
+    ("manufacturing", frozenset({"PURCHASE_ORDER", "CONTRACT_QUERY", "CATALOG_PRICING", "RETURN_REFUND"}), "Vendor Procurement – Manufacturing"),
+    ("office supplies", frozenset({"PURCHASE_ORDER", "CONTRACT_QUERY", "CATALOG_PRICING", "RETURN_REFUND"}), "Vendor Procurement – Office Supplies"),
+    # Facilities & Logistics
+    ("facilities", frozenset({"DELIVERY_SHIPMENT", "QUALITY_ISSUE", "SLA_BREACH_REPORT"}), "Vendor Facilities Management"),
+    ("logistics", frozenset({"DELIVERY_SHIPMENT", "QUALITY_ISSUE", "SLA_BREACH_REPORT"}), "Vendor Logistics Management"),
+    # Professional & Consulting
+    ("professional services", frozenset({"CONTRACT_QUERY", "SLA_BREACH_REPORT", "QUALITY_ISSUE", "ONBOARDING"}), "Vendor Professional Services"),
+    ("consulting", frozenset({"CONTRACT_QUERY", "SLA_BREACH_REPORT", "QUALITY_ISSUE", "ONBOARDING"}), "Vendor Consulting Services"),
+]
+
+# Set of all valid assignment-group names — used to validate LLM output
+# against the canonical taxonomy. Anything not in this set falls back
+# to the deterministic resolver below.
+VALID_ASSIGNMENT_GROUPS: frozenset[str] = frozenset(
+    [DEFAULT_TEAM]
+    + list(PRIMARY_INTENT_TEAMS.values())
+    + [group for _, _, group in SECONDARY_ROUTING]
+)
+
+
+def resolve_assignment_group(
+    intent_classification: str | None,
+    vendor_category: str | None,
+) -> str:
+    """Apply primary → secondary → fallback routing to pick a group.
+
+    The LLM is asked to do the same reasoning in the prompt, but this
+    function is the deterministic source of truth so a hallucinated
+    `suggested_category` cannot send a query to a non-existent team.
+    Default is "Vendor Support" when nothing matches.
+    """
+    intent = (intent_classification or "").upper().strip()
+    category = (vendor_category or "").lower().strip()
+
+    # Primary: intent alone resolves the group.
+    if intent in PRIMARY_INTENT_TEAMS:
+        return PRIMARY_INTENT_TEAMS[intent]
+
+    # Secondary: vendor category + eligible intent.
+    for cat_key, eligible_intents, group_name in SECONDARY_ROUTING:
+        if category == cat_key and intent in eligible_intents:
+            return group_name
+
+    # Fallback.
+    return DEFAULT_TEAM
 
 # Base SLA hours by vendor tier
 TIER_SLA_HOURS: dict[str, int] = {
@@ -111,21 +148,27 @@ class RoutingNode:
         vendor_context = state.get("vendor_context") or {}
 
         # Extract fields for routing rules
-        suggested_category = analysis_result.get("suggested_category", "general")
+        intent_classification = analysis_result.get("intent_classification", "")
+        suggested_category = analysis_result.get("suggested_category", "")
         urgency_level = analysis_result.get("urgency_level", "MEDIUM")
 
-        # Get vendor tier (default to BRONZE if no vendor context)
+        # Get vendor tier + category (defaults: BRONZE / unknown)
         vendor_profile = vendor_context.get("vendor_profile", {})
         tier_data = vendor_profile.get("tier", {})
         vendor_tier = tier_data.get("tier_name", "BRONZE")
+        vendor_category = vendor_profile.get("vendor_category")
 
         # Rule 1: Team assignment
-        # First try exact match on official query type (e.g., "INVOICE_PAYMENT")
-        # then fall back to keyword match on lowercase category (e.g., "billing")
-        assigned_team = QUERY_TYPE_TEAM_MAP.get(
-            suggested_category.upper(),
-            CATEGORY_TEAM_MAP.get(suggested_category.lower(), DEFAULT_TEAM),
-        )
+        # Trust the LLM's suggested_category ONLY when it's one of the
+        # canonical assignment-group names. Otherwise fall back to the
+        # deterministic resolver, which guarantees a valid group name
+        # (default: "Vendor Support") regardless of LLM output.
+        if suggested_category in VALID_ASSIGNMENT_GROUPS:
+            assigned_team = suggested_category
+        else:
+            assigned_team = resolve_assignment_group(
+                intent_classification, vendor_category
+            )
 
         # Rule 2: SLA calculation
         tier_hours = TIER_SLA_HOURS.get(vendor_tier, self._settings.sla_default_hours)
@@ -141,7 +184,9 @@ class RoutingNode:
 
         # Build routing reason for audit trail
         routing_reason = (
-            f"Category '{suggested_category}' → team '{assigned_team}'. "
+            f"Intent '{intent_classification}' + "
+            f"vendor_category '{vendor_category or 'unknown'}' → "
+            f"team '{assigned_team}'. "
             f"Tier '{vendor_tier}' + urgency '{urgency_level}' → "
             f"SLA {total_hours}h."
         )
@@ -149,7 +194,7 @@ class RoutingNode:
         routing_decision = RoutingDecision(
             assigned_team=assigned_team,
             sla_target=sla_target,
-            category=suggested_category,
+            category=suggested_category or intent_classification or "unknown",
             priority=urgency_level,
             routing_reason=routing_reason,
             requires_human_investigation=False,
@@ -161,7 +206,9 @@ class RoutingNode:
             assigned_team=assigned_team,
             sla_hours=total_hours,
             priority=urgency_level,
-            category=suggested_category,
+            intent_classification=intent_classification,
+            suggested_category=suggested_category,
+            vendor_category=vendor_category,
             vendor_tier=vendor_tier,
             correlation_id=correlation_id,
         )
@@ -184,7 +231,9 @@ class RoutingNode:
                 "assigned_team": assigned_team,
                 "priority": urgency_level,
                 "sla_hours": total_hours,
-                "category": suggested_category,
+                "intent_classification": intent_classification,
+                "suggested_category": suggested_category,
+                "vendor_category": vendor_category,
                 "vendor_tier": vendor_tier,
             },
         )

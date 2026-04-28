@@ -202,7 +202,7 @@ START → context_loading → query_analysis → confidence_check
 
 ### Step 7: Context Loading
 
-File: `src/pipeline/nodes/context_loading.py` -> `ContextLoadingNode.execute(state)`
+File: `src/orchestration/nodes/context_loading.py` -> `ContextLoadingNode.execute(state)`
 
 **Input:** PipelineState with unified_payload containing vendor_id
 **Output:** `{vendor_context: dict, status: "ANALYZING"}`
@@ -210,12 +210,13 @@ File: `src/pipeline/nodes/context_loading.py` -> `ContextLoadingNode.execute(sta
 1. Extract vendor_id from unified_payload
 2. If no vendor_id → set vendor_context=None, return
 3. Cache check: `postgres.cache_read("cache.vendor_cache", "vendor_id", vendor_id)`
-   - Hit → build VendorProfile from cached data
-   - Miss → `salesforce.find_vendor_by_id(vendor_id)` → build profile from SF data
-   - Both fail → default BRONZE profile ("Unknown Vendor")
+   - Hit → `_build_vendor_profile(row)` reads top-level columns (`vendor_name`, `vendor_tier`, `vendor_category`) and falls back to the JSONB `cache_data` blob for any missing field.
+   - Miss → `salesforce.find_vendor_by_id(vendor_id)` SOQL selects `Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, Category__c, City__c`. `_build_vendor_profile_from_salesforce(record, vendor_id)` produces a `VendorProfile` carrying `vendor_category` (the Salesforce `Category__c` value).
+   - On a cache miss, `_write_vendor_cache(profile, correlation_id)` does an UPSERT into `cache.vendor_cache` populating `cache_data` (full profile JSONB) plus dedicated `vendor_name`, `vendor_tier`, `vendor_category` columns with a 1-hour TTL. This is non-critical — a write failure is logged but never blocks the pipeline.
+   - Both fail → default BRONZE profile ("Unknown Vendor", `vendor_category=None`)
 4. Load episodic memory: `postgres.fetch("SELECT ... FROM memory.episodic_memory WHERE vendor_id=$1 LIMIT 5")`
    - Non-critical: failure returns empty list, pipeline continues
-5. Build VendorContext (frozen Pydantic model), write to state as dict via `model_dump()`
+5. Build VendorContext (frozen Pydantic model), write to state as dict via `model_dump()`. Downstream nodes read `state["vendor_context"]["vendor_profile"]["vendor_category"]`.
 
 ### Step 8: Query Analysis (LLM Call #1)
 
@@ -246,14 +247,25 @@ File: `src/pipeline/nodes/confidence_check.py` -> `ConfidenceCheckNode.execute(s
 
 ### Step 9A: Routing (Deterministic Rules)
 
-File: `src/pipeline/nodes/routing.py` -> `RoutingNode.execute(state)`
+File: `src/orchestration/nodes/routing.py` -> `RoutingNode.execute(state)`, `resolve_assignment_group(intent, vendor_category)`
 
-**Team assignment** by suggested_category:
-- billing/invoice/payment → finance-ops
-- delivery/shipping/logistics → supply-chain
-- contract/agreement/terms/legal → legal-compliance
-- technical/integration/api/product → tech-support
-- default → general-support
+**Team assignment** uses primary → secondary → fallback rules. The LLM's `suggested_category` is trusted only when it matches the canonical taxonomy in `VALID_ASSIGNMENT_GROUPS`; otherwise the deterministic resolver runs.
+
+**Primary routing (intent alone):**
+- INVOICE_PAYMENT → `Vendor Finance – AP & Invoicing`
+- COMPLIANCE_AUDIT → `Vendor Compliance & Audit`
+- GENERAL_INQUIRY → `Vendor Support`
+
+**Secondary routing (vendor_category + eligible intent):**
+- IT Services + {TECHNICAL_SUPPORT, SLA_BREACH_REPORT, DELIVERY_SHIPMENT, CONTRACT_QUERY} → `Vendor IT Services`
+- Telecom / Security — same eligible intents → `Vendor Telecom Services` / `Vendor Security Services`
+- Raw Materials / Manufacturing / Office Supplies + {PURCHASE_ORDER, CONTRACT_QUERY, CATALOG_PRICING, RETURN_REFUND} → `Vendor Procurement – {category}`
+- Facilities / Logistics + {DELIVERY_SHIPMENT, QUALITY_ISSUE, SLA_BREACH_REPORT} → `Vendor Facilities Management` / `Vendor Logistics Management`
+- Professional Services / Consulting + {CONTRACT_QUERY, SLA_BREACH_REPORT, QUALITY_ISSUE, ONBOARDING} → `Vendor Professional Services` / `Vendor Consulting Services`
+
+**Fallback:** Anything unmatched (including `vendor_category=None`) → `Vendor Support`.
+
+`RoutingDecision.assigned_team` is one of these 13 group names; ServiceNow's `assignment_group` is set to the same string. `routing_reason` records both the intent and the vendor_category that produced the decision.
 
 **SLA calculation** by tier × urgency:
 - PLATINUM base 4h, GOLD 8h, SILVER 16h, BRONZE 24h

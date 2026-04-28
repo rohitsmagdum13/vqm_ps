@@ -241,7 +241,12 @@ class ContextLoadingNode:
                     vendor_id=vendor_id,
                     correlation_id=correlation_id,
                 )
-                return self._build_vendor_profile_from_salesforce(sf_data, vendor_id)
+                profile = self._build_vendor_profile_from_salesforce(sf_data, vendor_id)
+                # Warm the cache so the next pipeline run skips the SF hit
+                # and downstream queries (routing, reporting) can read the
+                # denormalized vendor_category column directly.
+                await self._write_vendor_cache(profile, correlation_id)
+                return profile
         except Exception:
             logger.warning(
                 "Salesforce lookup failed — using default profile",
@@ -252,6 +257,59 @@ class ContextLoadingNode:
 
         # Both failed — return default BRONZE profile
         return self._default_vendor_profile(vendor_id)
+
+    async def _write_vendor_cache(
+        self, profile: VendorProfile, correlation_id: str
+    ) -> None:
+        """Write the freshly fetched profile into cache.vendor_cache.
+
+        Stores the full VendorProfile in cache_data (JSONB) and also
+        promotes vendor_name, vendor_tier, vendor_category into their
+        own columns (added in migration 020). Non-critical — never
+        block the pipeline on a cache write failure.
+        """
+        from datetime import timedelta
+        import json
+
+        expires_at = TimeHelper.ist_now() + timedelta(hours=1)
+        try:
+            await self._postgres.execute(
+                """
+                INSERT INTO cache.vendor_cache (
+                    vendor_id, cache_data, expires_at,
+                    vendor_name, vendor_tier, vendor_category
+                )
+                VALUES ($1, $2::jsonb, $3, $4, $5, $6)
+                ON CONFLICT (vendor_id) DO UPDATE SET
+                    cache_data      = EXCLUDED.cache_data,
+                    cached_at       = NOW(),
+                    expires_at      = EXCLUDED.expires_at,
+                    vendor_name     = EXCLUDED.vendor_name,
+                    vendor_tier     = EXCLUDED.vendor_tier,
+                    vendor_category = EXCLUDED.vendor_category
+                """,
+                profile.vendor_id,
+                json.dumps(profile.model_dump(mode="json")),
+                expires_at,
+                profile.vendor_name,
+                profile.tier.tier_name,
+                profile.vendor_category,
+            )
+            logger.info(
+                "Vendor cache warmed",
+                step="context_loading",
+                vendor_id=profile.vendor_id,
+                vendor_category=profile.vendor_category,
+                vendor_tier=profile.tier.tier_name,
+                correlation_id=correlation_id,
+            )
+        except Exception:
+            logger.warning(
+                "Vendor cache warm failed — non-critical",
+                step="context_loading",
+                vendor_id=profile.vendor_id,
+                correlation_id=correlation_id,
+            )
 
     async def _load_episodic_memory(
         self, vendor_id: str, correlation_id: str
@@ -279,33 +337,57 @@ class ContextLoadingNode:
             return []
 
     def _build_vendor_profile(self, data: dict) -> VendorProfile:
-        """Build VendorProfile from cached data dict."""
-        tier_data = data.get("tier", {})
-        if isinstance(tier_data, dict):
+        """Build VendorProfile from cached data.
+
+        Accepts either the full cache row (with top-level vendor_name,
+        vendor_tier, vendor_category columns plus a cache_data JSONB
+        blob) or just the inner cache_data dict. The dedicated columns
+        win when present so a partially populated blob can't override
+        the canonical denormalized fields.
+        """
+        blob = data.get("cache_data") if isinstance(data.get("cache_data"), dict) else data
+
+        # Tier: prefer top-level vendor_tier column, fall back to nested tier dict
+        tier_name_top = data.get("vendor_tier")
+        tier_data = blob.get("tier", {}) if isinstance(blob, dict) else {}
+        if tier_name_top:
+            tier = VendorTier(
+                tier_name=tier_name_top,
+                sla_hours=tier_data.get("sla_hours", 24) if isinstance(tier_data, dict) else 24,
+                priority_multiplier=tier_data.get("priority_multiplier", 1.0)
+                if isinstance(tier_data, dict)
+                else 1.0,
+            )
+        elif isinstance(tier_data, dict) and tier_data:
             tier = VendorTier(**tier_data)
         else:
             tier = VendorTier(tier_name="BRONZE", sla_hours=24, priority_multiplier=1.0)
 
         return VendorProfile(
-            vendor_id=data.get("vendor_id", ""),
-            vendor_name=data.get("vendor_name", "Unknown"),
+            vendor_id=data.get("vendor_id") or blob.get("vendor_id", ""),
+            vendor_name=data.get("vendor_name") or blob.get("vendor_name", "Unknown"),
             tier=tier,
-            primary_contact_email=data.get("primary_contact_email", ""),
-            is_active=data.get("is_active", True),
-            account_manager=data.get("account_manager"),
+            primary_contact_email=blob.get("primary_contact_email", "") if isinstance(blob, dict) else "",
+            is_active=blob.get("is_active", True) if isinstance(blob, dict) else True,
+            account_manager=blob.get("account_manager") if isinstance(blob, dict) else None,
+            vendor_category=data.get("vendor_category") or (blob.get("vendor_category") if isinstance(blob, dict) else None),
         )
 
     def _build_vendor_profile_from_salesforce(
         self, sf_data: dict, vendor_id: str
     ) -> VendorProfile:
         """Build VendorProfile from Salesforce Vendor_Account__c record."""
+        sf_tier = (sf_data.get("Vendor_Tier__c") or "SILVER").upper()
+        if sf_tier not in ("PLATINUM", "GOLD", "SILVER", "BRONZE"):
+            sf_tier = "SILVER"
         return VendorProfile(
             vendor_id=vendor_id,
             vendor_name=sf_data.get("Name", "Unknown"),
-            tier=VendorTier(tier_name="SILVER", sla_hours=16, priority_multiplier=1.0),
+            tier=VendorTier(tier_name=sf_tier, sla_hours=16, priority_multiplier=1.0),
             primary_contact_email=sf_data.get("Email", ""),
             is_active=True,
             account_manager=sf_data.get("Owner", {}).get("Name") if isinstance(sf_data.get("Owner"), dict) else None,
+            vendor_category=sf_data.get("Category__c"),
         )
 
     def _default_vendor_profile(self, vendor_id: str) -> VendorProfile:

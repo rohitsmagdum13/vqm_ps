@@ -134,7 +134,7 @@ class VendorLookupMixin:
 
         soql = (
             "SELECT Id, Name, Vendor_ID__c, Website__c, Vendor_Tier__c, "
-            "City__c "
+            "Category__c, City__c "
             f"FROM Vendor_Account__c WHERE {where_field} = '{safe_id}' "
             "LIMIT 1"
         )

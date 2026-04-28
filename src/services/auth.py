@@ -388,32 +388,48 @@ async def _warm_vendor_cache(
 
     from utils.helpers import TimeHelper
 
+    vendor_name = sf_record.get("Name", "Unknown")
+    vendor_tier = (sf_record.get("Vendor_Tier__c") or "BRONZE").upper()
+    if vendor_tier not in ("PLATINUM", "GOLD", "SILVER", "BRONZE"):
+        vendor_tier = "BRONZE"
+    vendor_category = sf_record.get("Category__c")
+
     payload = {
         "vendor_id": vendor_id,
-        "vendor_name": sf_record.get("Name", "Unknown"),
+        "vendor_name": vendor_name,
         "tier": {
-            "tier_name": sf_record.get("Vendor_Tier__c") or "BRONZE",
+            "tier_name": vendor_tier,
             "sla_hours": 24,
             "priority_multiplier": 1.0,
         },
         "primary_contact_email": sf_record.get("Email") or "",
         "is_active": True,
+        "vendor_category": vendor_category,
     }
     expires_at = TimeHelper.ist_now() + timedelta(hours=1)
 
     try:
         await pg.execute(
             """
-            INSERT INTO cache.vendor_cache (vendor_id, cache_data, expires_at)
-            VALUES ($1, $2::jsonb, $3)
+            INSERT INTO cache.vendor_cache (
+                vendor_id, cache_data, expires_at,
+                vendor_name, vendor_tier, vendor_category
+            )
+            VALUES ($1, $2::jsonb, $3, $4, $5, $6)
             ON CONFLICT (vendor_id) DO UPDATE SET
-                cache_data = EXCLUDED.cache_data,
-                cached_at = NOW(),
-                expires_at = EXCLUDED.expires_at
+                cache_data      = EXCLUDED.cache_data,
+                cached_at       = NOW(),
+                expires_at      = EXCLUDED.expires_at,
+                vendor_name     = EXCLUDED.vendor_name,
+                vendor_tier     = EXCLUDED.vendor_tier,
+                vendor_category = EXCLUDED.vendor_category
             """,
             vendor_id,
             json.dumps(payload),
             expires_at,
+            vendor_name,
+            vendor_tier,
+            vendor_category,
         )
     except Exception:
         logger.debug(

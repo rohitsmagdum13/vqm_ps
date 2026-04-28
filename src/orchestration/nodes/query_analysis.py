@@ -125,6 +125,7 @@ class QueryAnalysisNode:
             "query_analysis_v1.j2",
             vendor_name=vendor_profile.get("vendor_name", "Unknown"),
             vendor_tier=vendor_profile.get("tier", {}).get("tier_name", "BRONZE"),
+            vendor_category=vendor_profile.get("vendor_category") or "Unknown",
             query_subject=query_subject,
             query_body=query_body,
             attachment_text=attachment_text,

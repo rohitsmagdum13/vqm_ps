@@ -17,6 +17,7 @@ and provide a confidence score for your analysis.
 
 - **Vendor Name:** {{ vendor_name }}
 - **Vendor Tier:** {{ vendor_tier }}
+- **Vendor Category:** {{ vendor_category | default("Unknown") }}
 - **Query Source:** {{ query_source }}
 
 {% if recent_interactions %}
@@ -66,7 +67,7 @@ Analyze the vendor query above and return a JSON object with EXACTLY these field
 }
 ```
 
-## Official Query Types (use for both intent_classification and suggested_category)
+## Official Query Types (use this list for `intent_classification`)
 
 Pick the BEST match from this list:
 - RETURN_REFUND — returns, refunds, RMA requests, credit notes
@@ -81,6 +82,55 @@ Pick the BEST match from this list:
 - TECHNICAL_SUPPORT — portal issues, API integration, system errors
 - ONBOARDING — new vendor registration, account setup, documentation
 - QUALITY_ISSUE — defects, quality incidents, corrective actions
+
+## Assignment Groups (use this list for `suggested_category`)
+
+`suggested_category` MUST be exactly one of the assignment-group names below.
+Pick the group by combining the chosen `intent_classification` with the
+**Vendor Category** in the context above, using the routing rules in the
+next section.
+
+- Vendor Support
+- Vendor Procurement – Raw Materials
+- Vendor Procurement – Manufacturing
+- Vendor Procurement – Office Supplies
+- Vendor IT Services
+- Vendor Telecom Services
+- Vendor Security Services
+- Vendor Facilities Management
+- Vendor Logistics Management
+- Vendor Professional Services
+- Vendor Consulting Services
+- Vendor Finance – AP & Invoicing
+- Vendor Compliance & Audit
+
+## Routing Rules for `suggested_category`
+
+Apply these rules in order. The first matching rule wins.
+
+**Primary Routing (intent-driven, category-independent):**
+- intent_classification = INVOICE_PAYMENT → `Vendor Finance – AP & Invoicing`
+- intent_classification = COMPLIANCE_AUDIT → `Vendor Compliance & Audit`
+- intent_classification = GENERAL_INQUIRY → `Vendor Support`
+
+**Secondary Routing (intent + Vendor Category):**
+
+| Vendor Category    | Eligible Intent Types                                           | Assignment Group                  |
+|--------------------|-----------------------------------------------------------------|-----------------------------------|
+| IT Services        | TECHNICAL_SUPPORT, SLA_BREACH_REPORT, DELIVERY_SHIPMENT, CONTRACT_QUERY | `Vendor IT Services`              |
+| Telecom            | TECHNICAL_SUPPORT, SLA_BREACH_REPORT, DELIVERY_SHIPMENT, CONTRACT_QUERY | `Vendor Telecom Services`         |
+| Security           | TECHNICAL_SUPPORT, SLA_BREACH_REPORT, DELIVERY_SHIPMENT, CONTRACT_QUERY | `Vendor Security Services`        |
+| Raw Materials      | PURCHASE_ORDER, CONTRACT_QUERY, CATALOG_PRICING, RETURN_REFUND  | `Vendor Procurement – Raw Materials` |
+| Manufacturing      | PURCHASE_ORDER, CONTRACT_QUERY, CATALOG_PRICING, RETURN_REFUND  | `Vendor Procurement – Manufacturing` |
+| Office Supplies    | PURCHASE_ORDER, CONTRACT_QUERY, CATALOG_PRICING, RETURN_REFUND  | `Vendor Procurement – Office Supplies` |
+| Facilities         | DELIVERY_SHIPMENT, QUALITY_ISSUE, SLA_BREACH_REPORT             | `Vendor Facilities Management`    |
+| Logistics          | DELIVERY_SHIPMENT, QUALITY_ISSUE, SLA_BREACH_REPORT             | `Vendor Logistics Management`     |
+| Professional Services | CONTRACT_QUERY, SLA_BREACH_REPORT, QUALITY_ISSUE, ONBOARDING | `Vendor Professional Services`    |
+| Consulting         | CONTRACT_QUERY, SLA_BREACH_REPORT, QUALITY_ISSUE, ONBOARDING    | `Vendor Consulting Services`      |
+
+**Fallback Rule:**
+- Anything that does not match a primary or secondary rule, or where
+  Vendor Category is missing/Unknown → `Vendor Support`
 ```
 
 ## Rules
