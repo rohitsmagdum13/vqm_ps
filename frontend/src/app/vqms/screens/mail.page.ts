@@ -15,10 +15,11 @@ import { FolderRail, type MailFilters } from './mail/folder-rail';
 import { MailList, type MailSort } from './mail/mail-list';
 import { MailDetail, type MailDetailAction } from './mail/mail-detail';
 import { ComposeModal } from './mail/compose-modal';
-import { MAIL_FOLDERS, MAIL_THREADS } from '../data/mail';
+import { MAIL_FOLDERS } from '../data/mail';
 import type { MailFolderId, MailThread } from '../data/mail';
 import { ENDPOINTS_MAIL } from '../data/endpoints';
 import { RoleService } from '../services/role.service';
+import { MailStore } from '../services/mail.store';
 
 const DEFAULT_FILTERS: MailFilters = {
   vendor: 'ALL',
@@ -50,16 +51,45 @@ const DEFAULT_FILTERS: MailFilters = {
 
       <div class="flex items-center justify-between px-6 py-3 border-b hairline bg-panel">
         <div>
-          <div class="ink" style="font-size:18px; font-weight:600; letter-spacing:-.02em;">
+          <div class="ink flex items-center gap-2" style="font-size:18px; font-weight:600; letter-spacing:-.02em;">
             Email management
+            @if (mail.status() === 'live') {
+              <span class="chip" style="color: var(--ok); border-color: var(--ok); font-size:10.5px;">
+                <vq-icon name="check-circle" [size]="10" /> Live · /emails
+              </span>
+            } @else if (mail.status() === 'loading') {
+              <span class="chip" style="font-size:10.5px;">
+                <vq-icon name="rotate-cw" [size]="10" /> Loading…
+              </span>
+            } @else if (mail.status() === 'error') {
+              <span
+                class="chip"
+                style="color: var(--bad); border-color: var(--bad); font-size:10.5px;"
+                [title]="mail.error() ?? ''"
+              >
+                <vq-icon name="alert-circle" [size]="10" /> {{ mail.error() }}
+              </span>
+            } @else {
+              <span class="chip" style="color: var(--muted); font-size:10.5px;">
+                <vq-icon name="info" [size]="10" /> Mock data
+              </span>
+            }
           </div>
           <div class="muted mt-0.5" style="font-size:12px;">
-            Unified vendor inbox · <vq-mono>{{ inboundCount }}</vq-mono> messages · backed by
+            Unified vendor inbox · <vq-mono>{{ inboundCount() }}</vq-mono> messages · backed by
             <vq-mono>intake.email_messages</vq-mono> +
             <vq-mono>workflow.draft_responses</vq-mono>
           </div>
         </div>
         <div class="flex items-center gap-2">
+          <button
+            class="btn"
+            (click)="refresh()"
+            [disabled]="mail.status() === 'loading'"
+            title="Reload from /emails"
+          >
+            <vq-icon name="rotate-cw" [size]="13" /> Refresh
+          </button>
           <vq-endpoints-button (clicked)="endpointsOpen.set(true)" />
           <button class="btn btn-accent" (click)="composeOpen.set(true)">
             <vq-icon name="pen-line" [size]="13" /> Compose
@@ -112,10 +142,11 @@ const DEFAULT_FILTERS: MailFilters = {
 })
 export class MailPage {
   protected readonly role = inject(RoleService);
+  protected readonly mail = inject(MailStore);
 
   protected readonly folder = signal<MailFolderId>('inbox');
   protected readonly filters = signal<MailFilters>(DEFAULT_FILTERS);
-  protected readonly selectedId = signal<string | null>(MAIL_THREADS[0]?.message_id ?? null);
+  protected readonly selectedId = signal<string | null>(null);
   protected readonly bulk = signal<ReadonlySet<string>>(new Set());
   protected readonly search = signal<string>('');
   protected readonly sort = signal<MailSort>('newest');
@@ -123,17 +154,23 @@ export class MailPage {
   protected readonly endpointsOpen = signal<boolean>(false);
 
   protected readonly endpoints = ENDPOINTS_MAIL;
-  protected readonly inboundCount = MAIL_THREADS.filter((r) => r._direction === 'inbound').length;
-
-  protected readonly flagged = signal<ReadonlySet<string>>(
-    new Set(MAIL_THREADS.filter((r) => r._flagged).map((r) => r.message_id)),
+  protected readonly inboundCount = computed<number>(
+    () => this.mail.threads().filter((r) => r._direction === 'inbound').length,
   );
+
+  protected readonly flagged = signal<ReadonlySet<string>>(new Set());
   protected readonly archived = signal<ReadonlySet<string>>(new Set());
 
   protected readonly allRows = computed<readonly MailThread[]>(() => {
     const flagSet = this.flagged();
-    return MAIL_THREADS.map((r) => ({ ...r, _flagged: flagSet.has(r.message_id) }));
+    return this.mail
+      .threads()
+      .map((r) => ({ ...r, _flagged: flagSet.has(r.message_id) || r._flagged }));
   });
+
+  refresh(): void {
+    void this.mail.refresh();
+  }
 
   protected readonly folderRows = computed<readonly MailThread[]>(() => {
     const folder = this.folder();

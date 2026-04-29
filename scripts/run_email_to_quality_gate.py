@@ -324,10 +324,43 @@ async def run_full_pipeline(
         body_preview = raw_email.get("bodyPreview", "")[:150].replace("\n", " ")
         attachments_raw = raw_email.get("attachments", [])
 
+        # Pull CC + extra-To off the raw email so the script's two
+        # reconstructed-payload paths (duplicate fallback and SQS-skip
+        # fallback) carry them through to the pipeline. The real
+        # production path puts these on the SQS message via
+        # EmailIntakeService; the script's reconstructions need to do
+        # the same or CC silently disappears.
+        own_mailbox_lc = (settings.graph_api_mailbox or "").lower()
+        raw_cc_emails = [
+            (ea.get("emailAddress", {}) or {}).get("address", "")
+            for ea in raw_email.get("ccRecipients", []) or []
+        ]
+        raw_to_emails = [
+            (ea.get("emailAddress", {}) or {}).get("address", "")
+            for ea in raw_email.get("toRecipients", []) or []
+        ]
+        cc_emails_from_raw = [
+            e for e in raw_cc_emails
+            if e and e.lower() != own_mailbox_lc
+        ]
+        extra_to_emails_from_raw = [
+            e for e in raw_to_emails
+            if e and e.lower() != own_mailbox_lc
+        ]
+
         result("From", f"{sender_name} <{sender_email}>")
         result("Subject", subject)
         result("Body preview", body_preview + ("..." if len(body_preview) == 150 else ""))
         result("Attachments", str(len(attachments_raw)))
+        result(
+            "CC on original",
+            ", ".join(cc_emails_from_raw) if cc_emails_from_raw else "(none)",
+        )
+        result(
+            "Extra To (besides mailbox)",
+            ", ".join(extra_to_emails_from_raw)
+            if extra_to_emails_from_raw else "(none)",
+        )
 
         # --- E2: Run the full 10-step email intake pipeline ---
         step_hdr("E2", "Email Intake Pipeline (idempotency -> parse -> S3 -> vendor -> DB -> SQS)")
@@ -379,6 +412,8 @@ async def run_full_pipeline(
                     "message_id": message_id,
                     "sender_email": sender_email,
                     "sender_name": sender_name,
+                    "cc_emails": cc_emails_from_raw,
+                    "extra_to_emails": extra_to_emails_from_raw,
                 },
             }
             result("Status", "[DUPLICATE] Using synthetic payload")
@@ -410,7 +445,11 @@ async def run_full_pipeline(
             query_id = parsed_email.query_id
             execution_id = IdGenerator.generate_execution_id()
 
-            # This is what EmailIntakeService enqueued to SQS (Step E2.9b)
+            # This is what EmailIntakeService enqueued to SQS (Step E2.9b).
+            # Include cc_emails / extra_to_emails so this reconstructed
+            # payload (used when --no-sqs-hop is set or the SQS receive
+            # times out) matches what the real EmailIntakeService puts on
+            # the queue. Without these, CC silently disappears.
             sqs_payload = {
                 "query_id": query_id,
                 "correlation_id": correlation_id,
@@ -429,6 +468,8 @@ async def run_full_pipeline(
                     "sender_name": parsed_email.sender_name,
                     "vendor_match_method": parsed_email.vendor_match_method,
                     "conversation_id": parsed_email.conversation_id,
+                    "cc_emails": cc_emails_from_raw,
+                    "extra_to_emails": extra_to_emails_from_raw,
                 },
             }
 
@@ -547,19 +588,22 @@ async def run_full_pipeline(
                 real_send = graph_api.send_email
 
                 async def _noop_send_email(
-                    *, to, subject, body_html, reply_to_message_id=None,
-                    correlation_id=None, **_kwargs,
+                    *, to, subject, body_html, cc=None, bcc=None,
+                    reply_to_message_id=None, correlation_id=None,
+                    **_kwargs,
                 ):
                     """Stubbed send_email -- logs the intent but does not send."""
+                    cc_repr = ", ".join(cc) if cc else "(none)"
                     print(
                         f"    [NO-EMAIL-SEND] Would send to {to} "
-                        f"(subject: {subject[:60]!r})"
+                        f"cc=[{cc_repr}] (subject: {subject[:60]!r})"
                     )
                     # Return the same dict shape the real send_email returns
                     return {
                         "sent": True,
                         "stubbed": True,
                         "to": to,
+                        "cc": list(cc) if cc else [],
                         "subject": subject,
                     }
 
@@ -622,6 +666,17 @@ async def run_full_pipeline(
         result("Correlation ID", initial_state["correlation_id"])
         result("Body length", f"{len(sqs_payload.get('body', ''))} chars")
         result("Vendor ID", sqs_payload.get("vendor_id") or "None")
+        # Surface CC / extra-To right before pipeline entry so we can see
+        # whether the metadata that DeliveryNode needs is actually present.
+        _meta = sqs_payload.get("metadata") or {}
+        result(
+            "Payload metadata.cc_emails",
+            ", ".join(_meta.get("cc_emails") or []) or "(none)",
+        )
+        result(
+            "Payload metadata.extra_to_emails",
+            ", ".join(_meta.get("extra_to_emails") or []) or "(none)",
+        )
 
         # --- Run the pipeline ---
         step_hdr("7-12", "Running LangGraph (context -> analysis -> routing -> draft -> QG -> delivery)")
@@ -805,6 +860,12 @@ async def run_full_pipeline(
             # which case Path B silently skipped the send.
             draft_snapshot = pipeline_result.get("draft_response") or {}
             recipient_used = draft_snapshot.get("_recipient_email", "")
+            cc_used = draft_snapshot.get("_cc_emails") or []
+            result(
+                "CC list passed to send",
+                ", ".join(cc_used) if cc_used else "(none — vendor only)",
+                indent=2,
+            )
 
             if final_status == "DELIVERY_FAILED":
                 result("Send Status", "[FAILED] " + str(pipeline_result.get("error", "")), indent=2)
