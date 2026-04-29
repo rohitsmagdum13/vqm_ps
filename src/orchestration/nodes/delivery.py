@@ -176,17 +176,20 @@ class DeliveryNode:
             payload.get("message_id")
             or metadata.get("message_id")
         )
+        cc_list = self._build_cc_list(metadata=metadata, recipient=recipient)
 
         # Build the persisted draft snapshot. The leading-underscore
         # fields are stripped before the admin UI sees them; the
         # DraftApprovalService reads `_recipient_email` /
-        # `_reply_to_message_id` when sending an approved draft.
+        # `_reply_to_message_id` / `_cc_emails` when sending an approved
+        # draft.
         draft_snapshot = {
             **draft,
             "subject": final_subject,
             "body": final_body,
             "_recipient_email": recipient,
             "_reply_to_message_id": reply_to_id,
+            "_cc_emails": cc_list,
         }
 
         # ----- Path A: halt at PENDING_APPROVAL, do NOT send -----
@@ -228,6 +231,7 @@ class DeliveryNode:
             to=recipient,
             subject=final_subject,
             body_html=final_body,
+            cc=cc_list,
             reply_to_message_id=reply_to_id,
             correlation_id=correlation_id,
             query_id=query_id,
@@ -360,11 +364,13 @@ class DeliveryNode:
             payload.get("message_id")
             or metadata.get("message_id")
         )
+        cc_list = self._build_cc_list(metadata=metadata, recipient=recipient)
 
         email_sent = await self._send_email(
             to=recipient,
             subject=final_subject,
             body_html=final_body,
+            cc=cc_list,
             reply_to_message_id=reply_to_id,
             correlation_id=correlation_id,
             query_id=query_id,
@@ -532,6 +538,7 @@ class DeliveryNode:
         reply_to_message_id: str | None,
         correlation_id: str,
         query_id: str,
+        cc: list[str] | None = None,
     ) -> bool:
         """Send email via Graph API.
 
@@ -553,6 +560,7 @@ class DeliveryNode:
                 to=to,
                 subject=subject,
                 body_html=body_html,
+                cc=cc or None,
                 reply_to_message_id=reply_to_message_id,
                 correlation_id=correlation_id,
             )
@@ -567,3 +575,40 @@ class DeliveryNode:
                 correlation_id=correlation_id,
             )
             return False
+
+    def _build_cc_list(
+        self, *, metadata: dict, recipient: str
+    ) -> list[str]:
+        """Build the CC list for the outbound reply.
+
+        Combines the original CC list with any "extra" To recipients
+        (i.e. anyone in To: besides the vendor's own address and our
+        shared mailbox), de-duplicates case-insensitively, and drops
+        the primary recipient + the shared mailbox so the reply does
+        not bounce back to itself or duplicate the To: line.
+
+        BCC is not handled here — Graph never returns bccRecipients on
+        inbound mail, so there is nothing to replicate.
+        """
+        cc_emails = list(metadata.get("cc_emails", []) or [])
+        extra_to_emails = list(metadata.get("extra_to_emails", []) or [])
+
+        # Anyone who was on the original To: line (besides the vendor and
+        # our own mailbox) becomes a CC on the reply. This keeps internal
+        # collaborators looped in without elevating them to the To: line.
+        own_mailbox = (self._settings.graph_api_mailbox or "").lower()
+        recipient_lc = (recipient or "").lower()
+
+        seen: set[str] = set()
+        result: list[str] = []
+        for addr in cc_emails + extra_to_emails:
+            if not addr:
+                continue
+            lower = addr.lower()
+            if lower in (recipient_lc, own_mailbox):
+                continue
+            if lower in seen:
+                continue
+            seen.add(lower)
+            result.append(addr)
+        return result

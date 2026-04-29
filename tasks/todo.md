@@ -348,3 +348,59 @@ Vendor sends an initial query email but forgets a PDF / clarifying detail, then 
 ---
 
 ## Current Phase: 7 — Frontend Portal (Angular)
+
+### Phase 7.1 — Port missing UI from `VQMS Dashboard _standalone_.html` (Mockup → Angular)
+
+Source: 14 extracted JSX files at `c:/tmp/vqms_extract/scripts/`. The mockup ships 14 admin screens; Angular `vqms/` has 13 of them. Phase 7.1 ports the headline gap (Mail / Email management, ~1,085 JSX lines) plus the cross-cutting Endpoints drawer that every screen uses.
+
+#### Endpoints drawer (cross-cutting)
+- [ ] Add missing lucide icons to `vqms/ui/icon.ts` (terminal + others used by Mail)
+- [ ] Build `vqms/data/endpoints.ts` — `EndpointSpec` type + 11 catalogs (overview, inbox, triage, vendors, vendor360, email-monitor, kb, bulk, audit, admin, portal, mail)
+- [ ] Build `vqms/ui/endpoints-drawer.ts` — drawer with "Already in codebase" + "Proposed new" sections
+- [ ] Build `vqms/ui/endpoints-button.ts` — "Endpoints" header button that opens the drawer
+- [ ] Wire button + drawer into all 11 admin screens (overview, inbox, triage, vendors, vendor-360, email, kb, bulk, audit, admin, portal)
+
+#### Mail / Email management screen
+- [ ] Build `vqms/data/mail.ts` — types: `MailFolder`, `MailThread`, `MailAiDraft`, `MailHistoryMsg`, `MailAuditEntry`, `MailInternalNote`, `MailSyncStatus`, `MailTemplate`. Mock data: MAIL_FOLDERS (10), MAIL_THREADS (14), MAIL_AI_DRAFTS, MAIL_THREAD_HISTORY, MAIL_AUDIT, MAIL_INTERNAL_NOTES, MAIL_SYNC, MAIL_TEMPLATES.
+- [ ] Build `vqms/services/mail-ui.service.ts` — signal-based bus for compose-open and selected-mail state
+- [ ] Build `vqms/screens/mail/folder-rail.ts` — left pane (10 folders + Vendor / Path / Confidence / Date / SLA filters + Has-attachment toggle)
+- [ ] Build `vqms/screens/mail/mail-row.ts` — single thread row (sender, time, vendor, subject, snippet, chips: path/confidence/AI-draft/attach count/SLA bar, query_id)
+- [ ] Build `vqms/screens/mail/mail-list.ts` — middle pane (search, sort dropdown, bulk actions, J/K hint, list of MailRow)
+- [ ] Build `vqms/screens/mail/ai-draft-card.ts` — Bedrock suggested-draft card (confidence + Quality Gate chips, body, sources, Use/Edit/Regenerate/Reject)
+- [ ] Build `vqms/screens/mail/vendor-mini-card.ts` — right-rail vendor stats (Open, P1, Health, SLA, Tier)
+- [ ] Build `vqms/screens/mail/internal-notes.ts` — right-rail note list + post box
+- [ ] Build `vqms/screens/mail/inline-composer.ts` — Reply / Reply-all / Forward / AI-draft composer at bottom of detail
+- [ ] Build `vqms/screens/mail/compose-modal.ts` — slide-over compose modal (vendor, contacts, link query, template, subject, body, attachments)
+- [ ] Build `vqms/screens/mail/mail-detail.ts` — right pane (header, From/To grid, action toolbar, AI-draft card, thread, attachments, audit drawer, inline composer)
+- [ ] Build `vqms/screens/mail/sync-banner.ts` — top banner (Microsoft Graph health, SQS queue depth, last-sync timer)
+- [ ] Build `vqms/screens/mail.page.ts` — top-level Mail screen wiring SyncBanner + 3-pane (FolderRail / MailList / MailDetail) + ComposeModal + EndpointsDrawer + keyboard shortcuts (J/K/C/E/F/`/`)
+- [ ] Add `mail` route to `app.routes.ts`
+- [ ] Add `mail` entry to `vqms/shell/nav.ts` (icon `mail-search`, badge = unread inbound count)
+
+#### Verification
+- [ ] `cd frontend && npm run build` — clean compile
+- [ ] Smoke-test in browser: Mail link opens, folders filter, mail rows render, detail pane shows AI draft + thread + attachments, Compose modal opens, Endpoints drawer opens on every screen
+
+### Phase 7.2 — Smaller in-screen additions
+
+Per the standalone HTML audit, these are lower-effort gaps that round out the existing screens:
+- [ ] Email pipeline: render the `ERROR_GROUPS` array as a panel (data already in file, just unused)
+- [ ] Audit log: add Events / Anomalies tabs (Anomalies = AI-flagged unusual actor/action pairs, ties to `/audit/anomalies` proposed endpoint)
+- [ ] Inbox: Saved-views dropdown — preset filter combinations the user can apply with one click (ties to `/queries/saved-views` proposed endpoint)
+- [ ] Verify build and smoke-test
+
+## Bugfix: Carry CC recipients through to outbound reply
+
+When a vendor sends an email with people in CC, the acknowledgment / resolution
+email currently goes only to the vendor. CC recipients are dropped between the
+parser (which extracts them) and the SQS payload. BCC cannot be replicated —
+inbound mail to the shared mailbox does not contain bccRecipients (BCC is
+stripped by the sender's mail server before delivery).
+
+- [x] `services/email_intake/service.py` — add `cc_emails` and `extra_to_emails` (non-self entries from `to_recipients`) into `UnifiedQueryPayload.metadata` so they survive the SQS hop
+- [x] `orchestration/nodes/delivery.py` — added `_build_cc_list()` (combines metadata cc + extra-to, dedupes vs primary recipient and our shared mailbox); passed to `_send_email(..., cc=...)` for Path B; stashed as `_cc_emails` on the persisted draft snapshot for Path A
+- [x] `orchestration/nodes/delivery.py` — same change inside `_deliver_resolution_mode` (Path B follow-up resolution send)
+- [x] `orchestration/nodes/delivery.py` — extended `_send_email` with `cc:` and forwards to `graph_api.send_email(cc=...)`
+- [x] `services/draft_approval.py` — reads `_cc_emails` from the draft snapshot and passes to `graph_api.send_email(..., cc=...)`; `cc_count` recorded on audit row
+- [x] `uv run ruff check` clean on all changed files; `uv run pytest` 558 passed
+

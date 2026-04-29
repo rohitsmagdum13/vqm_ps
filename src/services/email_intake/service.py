@@ -254,6 +254,24 @@ class EmailIntakeService:
         # outbox INSERT and the immediate publish attempt without
         # rebuilding it.
         body_text = parsed.get("body_text", "") or parsed.get("body_preview", "")
+
+        # Carry forward the original recipient lists so the Delivery node
+        # can reply-all (vendor + everyone they CC'd). BCC is intentionally
+        # not propagated — Microsoft Graph does not return bccRecipients
+        # on inbound mail (BCC is stripped by the sender's mail server
+        # before delivery to non-BCC'd recipients), so there is nothing
+        # to replicate. Drop our own mailbox out of to_recipients so the
+        # reply does not loop back to vendor-support@.
+        own_mailbox = (self._settings.graph_api_mailbox or "").lower()
+        cc_emails = [
+            r["email"] for r in parsed.get("cc_recipients", [])
+            if r.get("email") and r["email"].lower() != own_mailbox
+        ]
+        extra_to_emails = [
+            r["email"] for r in parsed.get("to_recipients", [])
+            if r.get("email") and r["email"].lower() != own_mailbox
+        ]
+
         payload = UnifiedQueryPayload(
             query_id=query_id,
             correlation_id=correlation_id,
@@ -272,6 +290,8 @@ class EmailIntakeService:
                 "sender_name": parsed.get("sender_name"),
                 "vendor_match_method": vendor_match_method,
                 "conversation_id": parsed.get("conversation_id"),
+                "cc_emails": cc_emails,
+                "extra_to_emails": extra_to_emails,
             },
         )
         payload_json = payload.model_dump(mode="json")

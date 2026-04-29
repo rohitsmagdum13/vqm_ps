@@ -358,11 +358,16 @@ class DraftApprovalService:
                 query_id,
             )
 
+        # Pull the CC list the DeliveryNode stashed on the draft. Empty
+        # list / missing key is fine — Graph just omits ccRecipients.
+        cc_emails = draft.get("_cc_emails") or None
+
         try:
             await self._graph_api.send_email(
                 to=recipient,
                 subject=draft.get("subject", ""),
                 body_html=draft.get("body", ""),
+                cc=cc_emails,
                 reply_to_message_id=draft.get("_reply_to_message_id"),
                 correlation_id=correlation_id,
             )
@@ -399,6 +404,7 @@ class DraftApprovalService:
             details={
                 "ticket_id": row.get("ticket_id"),
                 "recipient": recipient,
+                "cc_count": len(cc_emails) if cc_emails else 0,
             },
         )
 

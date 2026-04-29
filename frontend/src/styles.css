@@ -1,107 +1,255 @@
 @import "tailwindcss";
 
 /* ────────────────────────────────────────────────────────────────
-   VQMS Design Tokens — Tailwind v4 @theme
-   Only these color names are allowed in component templates.
+   VQMS Design Tokens — design system from VQMS Dashboard.html
+   Neutral palette + burnt sienna accent · Inter Tight + JetBrains Mono
    ──────────────────────────────────────────────────────────────── */
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --line: #e7e7e3;
+  --line-strong: #d6d6d1;
+  --ink: #18181b;
+  --ink-2: #3f3f46;
+  --muted: #71717a;
+  --subtle: #a1a1aa;
+  --accent: #c2410c;       /* burnt sienna */
+  --accent-soft: #fff1ea;
+  --ok: #15803d;
+  --warn: #b45309;
+  --bad: #b91c1c;
+  --info: #1d4ed8;
+  --path-a: #15803d;
+  --path-b: #1d4ed8;
+  --path-c: #b45309;
+}
+
+html.dark {
+  --bg: #0b0b0e;
+  --panel: #131317;
+  --line: #23232a;
+  --line-strong: #2e2e36;
+  --ink: #f4f4f5;
+  --ink-2: #d4d4d8;
+  --muted: #a1a1aa;
+  --subtle: #71717a;
+  --accent: #fb923c;
+  --accent-soft: #2a1407;
+  --ok: #4ade80;
+  --warn: #fbbf24;
+  --bad: #f87171;
+  --info: #60a5fa;
+  --path-a: #4ade80;
+  --path-b: #60a5fa;
+  --path-c: #fbbf24;
+}
+
 @theme {
-  /* Semantic core */
-  --color-primary: #3c2cda;          /* hexaware-blue */
-  --color-secondary: #07125e;        /* dark-blue */
-  --color-accent: #14cbde;           /* electric-blue */
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+  --color-subtle: var(--subtle);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-warn: var(--warn);
+  --color-bad: var(--bad);
+  --color-info: var(--info);
 
-  /* Foreground / background */
-  --color-fg: #040d43;               /* text primary (black) */
-  --color-fg-dim: #8088a7;           /* text muted (silver) */
-  --color-bg: #f4eff2;               /* app background (light) */
-
-  /* Borders */
-  --color-border-light: #cbd0e5;
-  --color-border-dark: #535983;
-
-  /* Surfaces */
-  --color-surface: #ffffff;          /* snow */
-  --color-surface-2: #f8f8f9;        /* hexaware-white */
-  --color-surface-3: #f4eff2;        /* light */
-
-  /* Alerts */
-  --color-error: #da2d2c;
-  --color-success: #10b981;
-  --color-warn: #ea9d00;             /* honey */
-  --color-info: #1d86ff;             /* bright-blue */
-
-  /* Accent extras from prototype */
-  --color-canary: #f4cb4e;
-
-  /* Typography */
-  --font-sans: "Sora", system-ui, -apple-system, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, "SF Mono", monospace;
-
-  /* Radii */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 18px;
-
-  /* Shadows (from prototype --sh/--sh2/--sh3) */
-  --shadow-sm: 0 1px 4px rgba(60, 44, 218, 0.07), 0 1px 2px rgba(0, 0, 0, 0.04);
-  --shadow-md: 0 4px 16px rgba(60, 44, 218, 0.10), 0 2px 6px rgba(0, 0, 0, 0.06);
-  --shadow-lg: 0 12px 40px rgba(60, 44, 218, 0.13), 0 4px 12px rgba(0, 0, 0, 0.08);
+  --font-sans: "Inter Tight", system-ui, -apple-system, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", monospace;
 }
 
-/* Global resets consistent with prototype */
-html, body {
-  height: 100%;
-  background: var(--color-bg);
-  color: var(--color-fg);
-  font-family: var(--font-sans);
+html, body, app-root { height: 100%; }
+body {
+  margin: 0;
+  font-family: 'Inter Tight', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
 }
 
-/* Angular custom-element hosts default to `display: inline`, which breaks
-   layout utilities like `space-y-*` and `grid gap-*` when the host element
-   is a direct child of the container. Make every app-level component host
-   a block by default. */
-app-root, [class^="app-"], [class*=" app-"],
-app-admin-dashboard-page, app-admin-kpi-grid, app-admin-alerts,
-app-priority-breakdown, app-stacked-bar-chart, app-period-switcher,
-app-portal-page, app-portal-hero, app-portal-kpi-strip,
-app-portal-quick-actions, app-portal-recent-queries,
-app-queries-page, app-query-filters, app-query-stats, app-query-table,
-app-query-detail-page,
-app-email-page, app-summary-cards, app-filter-rail, app-message-list,
-app-message-viewer,
-app-wizard-page, app-wizard-stepper, app-wizard-step-type,
-app-wizard-step-details, app-wizard-step-review,
-app-wizard-submitting, app-wizard-success,
-app-preferences-page, app-pref-nav, app-profile-box, app-toggle-row,
-app-language-panel,
-app-login-page, app-shell, app-top-nav, app-user-menu, app-page-header,
-app-toast,
-ui-button, ui-badge, ui-kpi-card, ui-sparkline, ui-spinner {
-  display: block;
+/* Utility classes used by templates */
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; font-feature-settings: "zero", "ss01"; }
+.panel { background: var(--panel); border: 1px solid var(--line); }
+.hairline { border-color: var(--line); }
+.hairline-strong { border-color: var(--line-strong); }
+.ink { color: var(--ink); }
+.ink-2 { color: var(--ink-2); }
+.muted { color: var(--muted); }
+.subtle { color: var(--subtle); }
+.bg-bg { background: var(--bg); }
+.bg-panel { background: var(--panel); }
+.bg-accent { background: var(--accent); }
+.bg-accent-soft { background: var(--accent-soft); }
+.text-accent { color: var(--accent); }
+.border-line { border-color: var(--line); }
+.border-line-strong { border-color: var(--line-strong); }
+.ring-accent { --tw-ring-color: var(--accent); }
+
+/* Selection */
+::selection { background: var(--accent); color: white; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border-radius: 999px;
+  border: 2px solid var(--bg);
 }
 
-::-webkit-scrollbar       { width: 4px; height: 4px; }
-::-webkit-scrollbar-thumb { background: var(--color-border-light); border-radius: 4px; }
+/* Animations */
+@keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.pulse-dot { animation: pulse-dot 1.6s ease-in-out infinite; }
 
-/* Email HTML body rendering — constrain inline styles without losing structure */
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.shimmer {
+  background: linear-gradient(90deg, transparent 0%, var(--line) 50%, transparent 100%);
+  background-size: 200% 100%;
+  animation: shimmer 2s linear infinite;
+}
+
+@keyframes fade-up { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+.fade-up { animation: fade-up .25s ease-out; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Focus ring */
+button:focus-visible,
+[role=button]:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Form controls */
+input, select, textarea {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  padding: 6px 10px;
+  font-size: 13px;
+  font-family: inherit;
+}
+input::placeholder, textarea::placeholder { color: var(--subtle); }
+
+/* Buttons */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  border: 1px solid var(--line-strong);
+  background: var(--panel);
+  color: var(--ink);
+  border-radius: 4px;
+  transition: background 120ms ease, border-color 120ms ease;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.btn:hover { background: var(--bg); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-primary { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.btn-primary:hover { background: var(--ink-2); }
+.btn-accent { background: var(--accent); color: white; border-color: var(--accent); }
+.btn-accent:hover { filter: brightness(.95); }
+.btn-ghost { border-color: transparent; background: transparent; }
+.btn-ghost:hover { background: var(--bg); border-color: var(--line); }
+
+/* Chip */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--panel);
+  color: var(--ink-2);
+  line-height: 1.4;
+}
+
+/* Nav item (sidebar) */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: var(--ink-2);
+  border-radius: 4px;
+  cursor: pointer;
+}
+.nav-item:hover { background: var(--bg); }
+.nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 500; }
+html.dark .nav-item.active { color: var(--accent); }
+
+/* Tabs */
+.tab {
+  padding: 8px 0;
+  margin-right: 20px;
+  font-size: 13px;
+  color: var(--muted);
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+}
+.tab.active { color: var(--ink); border-bottom-color: var(--accent); font-weight: 500; }
+
+/* Tables */
+.vqms-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.vqms-table thead th {
+  text-align: left;
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.vqms-table tbody td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+}
+.vqms-table tbody tr:hover { background: var(--bg); cursor: pointer; }
+.vqms-table tbody tr.selected { background: var(--accent-soft); }
+.vqms-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Grid background pattern (used by some headers) */
+.grid-bg {
+  background-image:
+    linear-gradient(to right, var(--line) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--line) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+/* Email html body rendering */
 .email-html-body { word-break: break-word; overflow-wrap: anywhere; }
 .email-html-body img { max-width: 100%; height: auto; }
 .email-html-body table { max-width: 100%; border-collapse: collapse; }
-.email-html-body a { color: var(--color-primary); text-decoration: underline; }
-.email-html-body p { margin: 0 0 0.75rem 0; }
-.email-html-body ul, .email-html-body ol { margin: 0 0 0.75rem 1.25rem; }
-.email-html-body blockquote {
-  border-left: 3px solid var(--color-border-light);
-  padding: 0.25rem 0.75rem;
-  margin: 0.5rem 0;
-  color: var(--color-fg-dim);
-}
+.email-html-body a { color: var(--accent); text-decoration: underline; }
 
-/* Animations referenced by components */
-@keyframes fade-up { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
-@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
-@keyframes spin    { to   { transform: rotate(360deg); } }
-@keyframes pulse-ring {
-  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4); }
-  50%      { opacity: 0.7; box-shadow: 0 0 0 5px rgba(16, 185, 129, 0); }
-}
+/* Angular custom-element hosts default to inline; force block for layout */
+app-root, [class^="vq-"], [class*=" vq-"] { display: block; }
