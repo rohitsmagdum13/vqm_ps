@@ -65,14 +65,21 @@ export interface MailChainListDto {
   readonly mail_chains: readonly MailChainDto[];
 }
 
+export type PriorityKey = 'Critical' | 'High' | 'Medium' | 'Low';
+
 export interface EmailStatsDto {
   readonly total_emails: number;
   readonly new_count: number;
   readonly reopened_count: number;
   readonly resolved_count: number;
-  readonly priority_breakdown: Readonly<Record<string, number>>;
+  readonly priority_breakdown: Readonly<Record<PriorityKey, number>>;
   readonly today_count: number;
   readonly this_week_count: number;
+  // Daily counts for the last 10 days, oldest -> newest. Length always 10.
+  // Backed by /emails/stats — see services/email_dashboard/service.py
+  // (_fill_daily_buckets) for the day-bucketing semantics.
+  readonly past_10_days_new: readonly number[];
+  readonly past_10_days_resolved: readonly number[];
 }
 
 export interface ListMailParams {

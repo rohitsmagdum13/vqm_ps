@@ -1,4 +1,11 @@
-import { ChangeDetectionStrategy, Component, OnChanges, SimpleChanges, computed, input, signal } from '@angular/core';
+import {
+  ChangeDetectionStrategy,
+  Component,
+  computed,
+  effect,
+  input,
+  signal,
+} from '@angular/core';
 import { Icon } from '../../ui/icon';
 import { Mono } from '../../ui/mono';
 import { Avatar } from '../../ui/avatar';
@@ -62,26 +69,47 @@ import type { MailInternalNote } from '../../data/mail';
     </div>
   `,
 })
-export class InternalNotes implements OnChanges {
+export class InternalNotes {
   readonly notes = input.required<readonly MailInternalNote[]>();
   readonly messageId = input.required<string>();
 
-  protected readonly list = signal<readonly MailInternalNote[]>([]);
+  // Local notes posted in this session, keyed off messageId. Reset
+  // automatically when the user switches to a different message via the
+  // effect below — that's the only place we write a signal in response
+  // to an input changing, and it runs OUTSIDE of change detection so it
+  // doesn't compound with parent re-renders.
+  protected readonly localAdditions = signal<readonly MailInternalNote[]>([]);
   protected readonly draft = signal<string>('');
+
+  // Composed from upstream notes + this session's local additions. Pure
+  // read of two signals — Angular memoises by reference equality, so
+  // when the upstream `notes` reference is stable (see the EMPTY_NOTES
+  // constant in mail-detail.ts) this computed doesn't re-evaluate.
+  protected readonly list = computed<readonly MailInternalNote[]>(() => {
+    const local = this.localAdditions();
+    if (local.length === 0) return this.notes();
+    return [...this.notes(), ...local];
+  });
+
   protected readonly canPost = computed<boolean>(() => this.draft().trim().length > 0);
 
-  ngOnChanges(changes: SimpleChanges): void {
-    if (changes['notes'] || changes['messageId']) {
-      this.list.set(this.notes());
+  constructor() {
+    // Reset local state when the selected message changes. Reading
+    // `messageId()` registers the dependency; the writes happen via the
+    // effect runner (off the synchronous CD pass) so they don't trigger
+    // an "expression changed after checked" cycle.
+    effect(() => {
+      this.messageId();
+      this.localAdditions.set([]);
       this.draft.set('');
-    }
+    });
   }
 
   protected post(): void {
     const text = this.draft().trim();
     if (!text) return;
     const ts = new Date().toISOString().replace('T', ' ').slice(0, 16);
-    this.list.update((l) => [...l, { author: 'Anika Verma', ts, text }]);
+    this.localAdditions.update((l) => [...l, { author: 'Anika Verma', ts, text }]);
     this.draft.set('');
   }
 

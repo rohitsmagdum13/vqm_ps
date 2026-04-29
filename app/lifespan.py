@@ -236,6 +236,20 @@ async def lifespan(application: FastAPI):
         logger.warning("Email Dashboard Service init failed")
         application.state.dashboard_service = None
 
+    # --- Create Admin Operations Overview Service ---
+    # Read-only service for GET /admin/overview. Aggregates workflow
+    # tables for the Operations Overview screen. Needs only postgres.
+    try:
+        from services.admin_overview import AdminOverviewService
+
+        application.state.admin_overview_service = AdminOverviewService(
+            postgres=application.state.postgres,
+        )
+        logger.info("Admin Overview Service ready")
+    except Exception:
+        logger.warning("Admin Overview Service init failed")
+        application.state.admin_overview_service = None
+
     # --- Create Triage Service (Path C) ---
     # Backs the triage API routes that reviewers use to correct
     # low-confidence analyses and resume the paused workflow.

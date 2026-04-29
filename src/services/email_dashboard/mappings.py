@@ -51,7 +51,7 @@ NEW_STATUSES_SQL = (
 # routing_decision.priority → dashboard display string
 
 PRIORITY_MAP: dict[str, str] = {
-    "critical": "High",
+    "critical": "Critical",
     "high": "High",
     "medium": "Medium",
     "low": "Low",

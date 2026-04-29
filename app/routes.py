@@ -12,6 +12,7 @@ from fastapi.openapi.utils import get_openapi
 
 from api.routes.admin_drafts import router as admin_drafts_router
 from api.routes.admin_email import router as admin_email_router
+from api.routes.admin_overview import router as admin_overview_router
 from api.routes.admin_queries import router as admin_queries_router
 from api.routes.auth import router as auth_router
 from api.routes.copilot_triage import router as copilot_triage_router
@@ -28,6 +29,7 @@ def register_routes(application: FastAPI) -> None:
     application.include_router(auth_router)
     application.include_router(queries_router)        # vendor-facing /queries
     application.include_router(admin_queries_router)  # admin-facing /admin/queries
+    application.include_router(admin_overview_router) # admin-facing /admin/overview
     application.include_router(vendors_router)
     application.include_router(webhooks_router)
     application.include_router(dashboard_router)

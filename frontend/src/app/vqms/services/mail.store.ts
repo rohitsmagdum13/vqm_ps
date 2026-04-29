@@ -65,6 +65,8 @@ export class MailStore {
     effect(() => {
       const role = this.#session.role();
       const authed = this.#session.authed();
+      // eslint-disable-next-line no-console
+      console.log('[MailStore] session change', { authed, role });
       if (authed && role === 'Admin') {
         void this.refresh();
       } else {
@@ -75,10 +77,16 @@ export class MailStore {
 
   async refresh(): Promise<void> {
     if (!this.#session.authed() || this.#session.role() !== 'Admin') {
-      // Reviewer / Vendor cannot call /emails — keep the mock data visible.
+      // eslint-disable-next-line no-console
+      console.log('[MailStore] refresh skipped — not Admin', {
+        authed: this.#session.authed(),
+        role: this.#session.role(),
+      });
       this.#state.update((s) => ({ ...s, status: 'mock', error: null }));
       return;
     }
+    // eslint-disable-next-line no-console
+    console.log('[MailStore] refresh starting → GET /emails + /emails/stats');
     this.#state.update((s) => ({ ...s, status: 'loading', error: null }));
 
     try {
@@ -88,6 +96,12 @@ export class MailStore {
         firstValueFrom(this.#api.stats()).catch(() => null),
       ]);
       const mapped = toMailThreads(list.mail_chains);
+      // eslint-disable-next-line no-console
+      console.log('[MailStore] refresh OK', {
+        chains: list.mail_chains.length,
+        threads: mapped.length,
+        statsLoaded: stats !== null,
+      });
       this.#state.set({
         status: 'live',
         // Empty live list means "no email-sourced queries yet" — that's a
@@ -98,6 +112,8 @@ export class MailStore {
         lastFetchedAt: Date.now(),
       });
     } catch (err: unknown) {
+      // eslint-disable-next-line no-console
+      console.error('[MailStore] refresh FAILED', err);
       this.#state.update((s) => ({
         ...s,
         status: 'error',

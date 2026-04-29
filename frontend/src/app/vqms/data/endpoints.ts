@@ -14,10 +14,29 @@ export interface EndpointSpec {
 }
 
 export const ENDPOINTS_OVERVIEW: readonly EndpointSpec[] = [
-  { method: 'GET', path: '/dashboard/overview', status: 'exists', source: 'dashboard.py', note: 'headline KPIs + path-mix sparklines' },
-  { method: 'GET', path: '/dashboard/sla', status: 'exists', source: 'dashboard.py', note: 'rolling SLA performance' },
-  { method: 'GET', path: '/dashboard/throughput', status: 'exists', source: 'dashboard.py', note: 'queries/day, last 30d' },
-  { method: 'GET', path: '/dashboard/path-mix', status: 'exists', source: 'dashboard.py', note: 'Path A/B/C distribution + AI confidence histogram' },
+  {
+    method: 'GET',
+    path: '/admin/overview',
+    status: 'exists',
+    source: 'admin_overview.py',
+    note:
+      'bundled response: KPIs + 30d sparklines + path-mix + 30d volume + 24h hourly + ' +
+      'confidence histogram + per-team SLA + top intents (single round-trip)',
+  },
+  {
+    method: 'GET',
+    path: '/admin/queries',
+    status: 'exists',
+    source: 'admin_queries.py',
+    note: 'recent queries table — already wired via QueriesStore',
+  },
+  {
+    method: 'GET',
+    path: '/vendors',
+    status: 'exists',
+    source: 'vendors.py',
+    note: 'vendor health side panel — already wired via VendorsStore',
+  },
 ];
 
 export const ENDPOINTS_INBOX: readonly EndpointSpec[] = [

@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { QUERIES as MOCK_QUERIES } from '../data/mock-data';
 import type { Query } from '../data/models';
@@ -69,14 +69,20 @@ export class PortalQueriesStore {
 
     // Re-derive on vendor list updates so the row's vendor_name/tier
     // stay in sync (the vendor master may be empty for a fresh tenant).
+    //
+    // CRITICAL: read `#state` via `untracked()` so this effect does NOT
+    // depend on `#state`. Without that guard, every write below triggers
+    // the effect again — an infinite loop in zoneless mode.
     effect(() => {
       const vendors = this.#vendors.vendors();
       const dtos = this.#lastDtos();
-      if (this.#state().status !== 'live' || dtos.length === 0) return;
+      if (dtos.length === 0) return;
+      const stateNow = untracked(() => this.#state());
+      if (stateNow.status !== 'live') return;
       const remapped = toUiQueries(dtos, (id) =>
         id ? vendors.find((v) => v.vendor_id === id) ?? null : null,
       );
-      this.#state.update((s) => ({ ...s, queries: remapped }));
+      this.#state.set({ ...stateNow, queries: remapped });
     });
   }
 

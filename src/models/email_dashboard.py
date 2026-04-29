@@ -176,10 +176,22 @@ class EmailStatsResponse(BaseModel):
     reopened_count: int = Field(description="Reopened queries")
     resolved_count: int = Field(description="Resolved or closed queries")
     priority_breakdown: dict[str, int] = Field(
-        description="Count by priority: {High: N, Medium: N, Low: N}"
+        description="Count by priority: {Critical: N, High: N, Medium: N, Low: N}"
     )
     today_count: int = Field(description="Queries created today (IST)")
     this_week_count: int = Field(description="Queries created in the last 7 days")
+    past_10_days_new: list[int] = Field(
+        description=(
+            "New-email counts per day for the last 10 days, oldest → newest. "
+            "Length is always exactly 10 (zero-filled for days with no activity)."
+        )
+    )
+    past_10_days_resolved: list[int] = Field(
+        description=(
+            "Resolved-email counts per day for the last 10 days, oldest → newest. "
+            "Length is always exactly 10 (zero-filled for days with no activity)."
+        )
+    )
 
 
 class AttachmentDownloadResponse(BaseModel):

@@ -15,10 +15,23 @@ import {
   fmtBytes,
   fmtMailTime,
 } from '../../data/mail';
-import type { MailThread } from '../../data/mail';
+import type {
+  MailAuditEntry,
+  MailHistoryMsg,
+  MailInternalNote,
+  MailThread,
+} from '../../data/mail';
 import { VENDORS } from '../../data/mock-data';
 
 export type MailDetailAction = 'flag' | 'archive' | 'create_query';
+
+// Module-level frozen empties used as stable fallbacks for the row's
+// derived computeds. Returning `?? []` would create a new array on
+// every evaluation, defeating signal memoisation and causing every
+// downstream subscriber to think the value changed.
+const EMPTY_HISTORY: readonly MailHistoryMsg[] = Object.freeze([]);
+const EMPTY_AUDIT: readonly MailAuditEntry[] = Object.freeze([]);
+const EMPTY_NOTES: readonly MailInternalNote[] = Object.freeze([]);
 
 @Component({
   selector: 'vq-mail-detail',
@@ -296,22 +309,22 @@ export class MailDetail {
 
   protected readonly history = computed(() => {
     const r = this.row();
-    if (!r) return [];
-    return MAIL_THREAD_HISTORY[r.conversation_id] ?? [];
+    if (!r) return EMPTY_HISTORY;
+    return MAIL_THREAD_HISTORY[r.conversation_id] ?? EMPTY_HISTORY;
   });
 
   protected readonly collapsedHistory = computed(() => this.history().filter((m) => m.collapsed));
 
   protected readonly audit = computed(() => {
     const r = this.row();
-    if (!r) return [];
-    return MAIL_AUDIT[r.message_id] ?? [];
+    if (!r) return EMPTY_AUDIT;
+    return MAIL_AUDIT[r.message_id] ?? EMPTY_AUDIT;
   });
 
   protected readonly notes = computed(() => {
     const r = this.row();
-    if (!r) return [];
-    return MAIL_INTERNAL_NOTES[r.message_id] ?? [];
+    if (!r) return EMPTY_NOTES;
+    return MAIL_INTERNAL_NOTES[r.message_id] ?? EMPTY_NOTES;
   });
 
   protected readonly vendor = computed(() => {

@@ -20,6 +20,7 @@ import type { MailFolderId, MailThread } from '../data/mail';
 import { ENDPOINTS_MAIL } from '../data/endpoints';
 import { RoleService } from '../services/role.service';
 import { MailStore } from '../services/mail.store';
+import { SessionService } from '../services/session.service';
 
 const DEFAULT_FILTERS: MailFilters = {
   vendor: 'ALL',
@@ -55,7 +56,8 @@ const DEFAULT_FILTERS: MailFilters = {
             Email management
             @if (mail.status() === 'live') {
               <span class="chip" style="color: var(--ok); border-color: var(--ok); font-size:10.5px;">
-                <vq-icon name="check-circle" [size]="10" /> Live · /emails
+                <vq-icon name="check-circle" [size]="10" /> Live · {{ mail.threads().length }}
+                message{{ mail.threads().length === 1 ? '' : 's' }}
               </span>
             } @else if (mail.status() === 'loading') {
               <span class="chip" style="font-size:10.5px;">
@@ -67,11 +69,15 @@ const DEFAULT_FILTERS: MailFilters = {
                 style="color: var(--bad); border-color: var(--bad); font-size:10.5px;"
                 [title]="mail.error() ?? ''"
               >
-                <vq-icon name="alert-circle" [size]="10" /> {{ mail.error() }}
+                <vq-icon name="alert-circle" [size]="10" /> Live load failed: {{ mail.error() }}
               </span>
             } @else {
-              <span class="chip" style="color: var(--muted); font-size:10.5px;">
-                <vq-icon name="info" [size]="10" /> Mock data
+              <span
+                class="chip"
+                style="color: var(--muted); font-size:10.5px;"
+                [title]="mockReason()"
+              >
+                <vq-icon name="info" [size]="10" /> Mock data — {{ mockReason() }}
               </span>
             }
           </div>
@@ -143,6 +149,20 @@ const DEFAULT_FILTERS: MailFilters = {
 export class MailPage {
   protected readonly role = inject(RoleService);
   protected readonly mail = inject(MailStore);
+  readonly #session = inject(SessionService);
+
+  /**
+   * Self-diagnostic for the "Mock data" chip — tells the user why
+   * they aren't seeing live data so they can fix it without opening
+   * DevTools. Order of checks matches the conditions inside
+   * MailStore.refresh().
+   */
+  protected mockReason(): string {
+    if (!this.#session.authed()) return 'not signed in';
+    if (this.#session.role() !== 'Admin')
+      return `Admin role required (current: ${this.#session.role()})`;
+    return 'auto-refresh has not run yet';
+  }
 
   protected readonly folder = signal<MailFolderId>('inbox');
   protected readonly filters = signal<MailFilters>(DEFAULT_FILTERS);
@@ -161,11 +181,18 @@ export class MailPage {
   protected readonly flagged = signal<ReadonlySet<string>>(new Set());
   protected readonly archived = signal<ReadonlySet<string>>(new Set());
 
+  // Avoid creating new MailThread objects when no manual flags are set.
+  // Mapping every thread on every recompute cascades through filteredRows
+  // -> selectedRow -> MailDetail -> InternalNotes, triggering O(n) work
+  // and re-renders for what is usually a no-op. Only spend that cost when
+  // the user has actually flagged a row.
   protected readonly allRows = computed<readonly MailThread[]>(() => {
     const flagSet = this.flagged();
-    return this.mail
-      .threads()
-      .map((r) => ({ ...r, _flagged: flagSet.has(r.message_id) || r._flagged }));
+    const base = this.mail.threads();
+    if (flagSet.size === 0) return base;
+    return base.map((r) =>
+      flagSet.has(r.message_id) && !r._flagged ? { ...r, _flagged: true } : r,
+    );
   });
 
   refresh(): void {

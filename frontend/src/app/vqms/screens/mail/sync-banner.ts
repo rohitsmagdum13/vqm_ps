@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, OnDestroy, OnInit, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component } from '@angular/core';
 import { Icon } from '../../ui/icon';
 import { Mono } from '../../ui/mono';
 import { HealthDot } from '../../ui/health-dot';
@@ -9,6 +9,11 @@ import { MAIL_SYNC } from '../../data/mail';
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [Icon, Mono, HealthDot],
+  // No setIntervals here. The earlier version updated a `seconds` signal
+  // every 1 s which caused continuous CD ticks on this component (in
+  // zoneless mode that's still bounded, but it's a steady pulse of work
+  // the page doesn't need). The "last synced" line shows the static
+  // value from MAIL_SYNC instead.
   template: `
     <div
       class="flex items-center gap-3 px-6 py-2 border-b hairline"
@@ -32,44 +37,15 @@ import { MAIL_SYNC } from '../../data/mail';
         {{ sync.sqs_in_flight }} in‑flight / {{ sync.sqs_dlq }} DLQ
       </span>
       <span class="flex-1"></span>
-      @if (newCount() > 0) {
-        <button
-          class="chip fade-up"
-          style="background: var(--accent-soft); color: var(--accent); border-color: var(--accent); font-weight:600;"
-          (click)="newCount.set(0)"
-        >
-          <vq-icon name="arrow-down" [size]="10" /> {{ newCount() }} new email{{
-            newCount() === 1 ? '' : 's'
-          }}
-          — refresh
-        </button>
-      }
       <span class="muted inline-flex items-center gap-1.5">
         <vq-icon name="refresh-cw" [size]="10" />
         last synced
-        <vq-mono cssClass="ink-2" [size]="10.5">{{ seconds() }}s</vq-mono>
+        <vq-mono cssClass="ink-2" [size]="10.5">{{ sync.last_sync_seconds_ago }}s</vq-mono>
         ago
       </span>
     </div>
   `,
 })
-export class SyncBanner implements OnInit, OnDestroy {
+export class SyncBanner {
   protected readonly sync = MAIL_SYNC;
-  protected readonly seconds = signal(MAIL_SYNC.last_sync_seconds_ago);
-  protected readonly newCount = signal(0);
-
-  #tick?: ReturnType<typeof setInterval>;
-  #pulse?: ReturnType<typeof setInterval>;
-
-  ngOnInit(): void {
-    this.#tick = setInterval(() => this.seconds.update((s) => (s + 1) % 90), 1000);
-    this.#pulse = setInterval(() => {
-      if (Math.random() > 0.55) this.newCount.update((c) => c + 1);
-    }, 9000);
-  }
-
-  ngOnDestroy(): void {
-    if (this.#tick) clearInterval(this.#tick);
-    if (this.#pulse) clearInterval(this.#pulse);
-  }
 }

@@ -18,7 +18,7 @@ Usage:
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, timedelta
 
 import structlog
 
@@ -219,11 +219,17 @@ class EmailDashboardService:
         """Get aggregate dashboard statistics for email-sourced queries.
 
         Counts emails by status category, priority, and time period.
+        Includes a 10-day-by-day breakdown of new vs. resolved counts
+        for sparkline rendering on the dashboard.
         """
         try:
             now = TimeHelper.ist_now()
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             week_start = today_start - timedelta(days=7)
+            # Window covers today + 9 prior days (10 buckets total). Resolved
+            # uses `updated_at` because RESOLVED/CLOSED is a terminal status —
+            # the row's last touch is when it was resolved.
+            ten_days_start = today_start - timedelta(days=9)
 
             # Main stats query — single pass over case_execution
             stats_sql = (
@@ -250,10 +256,45 @@ class EmailDashboardService:
             priority_rows = await self._postgres.fetch(priority_sql)
 
             # Map DB priority values to display values and aggregate
-            priority_breakdown: dict[str, int] = {"High": 0, "Medium": 0, "Low": 0}
+            priority_breakdown: dict[str, int] = self._empty_priority_breakdown()
             for row in priority_rows:
                 display_priority = DashboardMapper.map_priority(row["priority"])
                 priority_breakdown[display_priority] += row["cnt"]
+
+            # 10-day daily breakdown for new + resolved.
+            # Two separate queries because `new_count` is keyed off
+            # `created_at` (when the email was ingested) while
+            # `resolved_count` is keyed off `updated_at` (when it
+            # transitioned to RESOLVED/CLOSED). Joining them in one
+            # query would double-count or fail to align days.
+            new_daily_sql = (
+                "SELECT date_trunc('day', ce.created_at)::date AS day, "
+                "COUNT(*) AS cnt "
+                f"FROM workflow.case_execution ce "
+                f"WHERE ce.source = 'email' "
+                f"AND ce.status IN ({NEW_STATUSES_SQL}) "
+                "AND ce.created_at >= $1 "
+                "GROUP BY day"
+            )
+            resolved_daily_sql = (
+                "SELECT date_trunc('day', ce.updated_at)::date AS day, "
+                "COUNT(*) AS cnt "
+                "FROM workflow.case_execution ce "
+                "WHERE ce.source = 'email' "
+                "AND ce.status IN ('RESOLVED', 'CLOSED') "
+                "AND ce.updated_at >= $1 "
+                "GROUP BY day"
+            )
+            new_daily_rows = await self._postgres.fetch(new_daily_sql, ten_days_start)
+            resolved_daily_rows = await self._postgres.fetch(
+                resolved_daily_sql, ten_days_start
+            )
+            past_10_days_new = self._fill_daily_buckets(
+                new_daily_rows, today_start.date()
+            )
+            past_10_days_resolved = self._fill_daily_buckets(
+                resolved_daily_rows, today_start.date()
+            )
 
             if stats_row:
                 return EmailStatsResponse(
@@ -264,6 +305,8 @@ class EmailDashboardService:
                     priority_breakdown=priority_breakdown,
                     today_count=stats_row["today_count"],
                     this_week_count=stats_row["week_count"],
+                    past_10_days_new=past_10_days_new,
+                    past_10_days_resolved=past_10_days_resolved,
                 )
 
             return EmailStatsResponse(
@@ -274,6 +317,8 @@ class EmailDashboardService:
                 priority_breakdown=priority_breakdown,
                 today_count=0,
                 this_week_count=0,
+                past_10_days_new=past_10_days_new,
+                past_10_days_resolved=past_10_days_resolved,
             )
 
         except Exception:
@@ -286,10 +331,35 @@ class EmailDashboardService:
                 new_count=0,
                 reopened_count=0,
                 resolved_count=0,
-                priority_breakdown={"High": 0, "Medium": 0, "Low": 0},
+                priority_breakdown=self._empty_priority_breakdown(),
                 today_count=0,
                 this_week_count=0,
+                past_10_days_new=[0] * 10,
+                past_10_days_resolved=[0] * 10,
             )
+
+    @staticmethod
+    def _empty_priority_breakdown() -> dict[str, int]:
+        """Seed dict with all four buckets so the response shape is stable
+        even when no rows exist for a given priority."""
+        return {"Critical": 0, "High": 0, "Medium": 0, "Low": 0}
+
+    @staticmethod
+    def _fill_daily_buckets(
+        rows: list[dict],
+        end_date: date,
+        window_days: int = 10,
+    ) -> list[int]:
+        """Project per-day count rows onto a fixed-length array, oldest →
+        newest, ending with `end_date` (today). Days with no rows become 0
+        so the frontend never has to handle gaps. Returned list length is
+        always exactly `window_days`.
+        """
+        by_day: dict[date, int] = {row["day"]: row["cnt"] for row in rows}
+        return [
+            by_day.get(end_date - timedelta(days=offset), 0)
+            for offset in range(window_days - 1, -1, -1)
+        ]
 
     @log_service_call
     async def get_email_chain(

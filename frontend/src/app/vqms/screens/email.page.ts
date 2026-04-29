@@ -1,12 +1,15 @@
-import { ChangeDetectionStrategy, Component, inject, signal } from '@angular/core';
+import { ChangeDetectionStrategy, Component, computed, inject, signal } from '@angular/core';
 import { Icon } from '../ui/icon';
 import { Mono } from '../ui/mono';
 import { HealthDot } from '../ui/health-dot';
 import { SectionHead } from '../ui/section-head';
+import { Sparkline } from '../ui/sparkline';
 import { EndpointsButton } from '../ui/endpoints-button';
 import { EndpointsDrawer } from '../ui/endpoints-drawer';
 import { EMAIL_PIPELINE, QUEUES, RECENT_INGEST } from '../data/mock-data';
 import { ENDPOINTS_EMAIL_MONITOR } from '../data/endpoints';
+import type { PriorityKey } from '../services/mail.api';
+import { MailStore } from '../services/mail.store';
 import { RoleService } from '../services/role.service';
 
 interface ErrorGroup {
@@ -28,11 +31,33 @@ const ERROR_GROUPS: readonly ErrorGroup[] = [
   { stage: 'S3 put', n: 1, latest: '4h ago', note: 'AccessDenied (transient)' },
 ];
 
+interface PriorityTile {
+  readonly key: PriorityKey;
+  readonly value: number;
+  readonly labelColor: string;
+  readonly borderColor: string;
+  readonly valueColor: string;
+}
+
+const PRIORITY_ORDER: readonly PriorityKey[] = ['Critical', 'High', 'Medium', 'Low'];
+
+// Per-priority colour palette. Critical gets the strongest accent so the
+// tile reads as "this needs attention" at a glance. Medium and Low stay
+// neutral so they fade into the page when zero.
+const PRIORITY_COLORS: Readonly<
+  Record<PriorityKey, { label: string; border: string; value: string }>
+> = {
+  Critical: { label: 'var(--bad)', border: 'var(--bad)', value: 'var(--bad)' },
+  High: { label: 'var(--warn)', border: 'var(--line-strong)', value: 'var(--ink)' },
+  Medium: { label: 'var(--muted)', border: 'var(--line)', value: 'var(--ink)' },
+  Low: { label: 'var(--muted)', border: 'var(--line)', value: 'var(--ink-2)' },
+};
+
 @Component({
   selector: 'vq-email-page',
   standalone: true,
   changeDetection: ChangeDetectionStrategy.OnPush,
-  imports: [Icon, Mono, HealthDot, SectionHead, EndpointsButton, EndpointsDrawer],
+  imports: [Icon, Mono, HealthDot, SectionHead, Sparkline, EndpointsButton, EndpointsDrawer],
   template: `
     <div class="p-6 max-w-[1600px] mx-auto fade-up">
       <div class="flex items-center justify-between mb-5">
@@ -66,6 +91,96 @@ const ERROR_GROUPS: readonly ErrorGroup[] = [
         [role]="role.role()"
         (closed)="endpointsOpen.set(false)"
       />
+
+      <!-- Stats strip: priority breakdown + 10-day sparklines.
+           Backed by GET /emails/stats → MailStore. Renders even before
+           stats arrive (zero-filled), and shows a small "stale" hint when
+           the store isn't live so the operator knows to sign in / refresh. -->
+      <div class="grid grid-cols-12 gap-3 mb-3">
+        <div class="panel col-span-5 p-4" style="border-radius:4px;">
+          <div class="flex items-center justify-between">
+            <vq-section-head
+              title="Priority breakdown"
+              desc="Email-sourced queries · routing_decision.priority"
+            />
+            @if (statsStatus() !== 'live') {
+              <span class="chip muted" style="font-size:10px;">{{ statsHint() }}</span>
+            }
+          </div>
+          <div class="grid grid-cols-4 gap-2 mt-2">
+            @for (p of priorityTiles(); track p.key) {
+              <div
+                class="panel p-3"
+                style="border-radius:4px; background: var(--bg);"
+                [style.border-color]="p.borderColor"
+              >
+                <div
+                  class="muted uppercase"
+                  style="font-size:9.5px; letter-spacing:.04em;"
+                  [style.color]="p.labelColor"
+                >
+                  {{ p.key }}
+                </div>
+                <vq-mono [size]="22" [weight]="600" [color]="p.valueColor">{{ p.value }}</vq-mono>
+              </div>
+            }
+          </div>
+        </div>
+
+        <div class="panel col-span-7 p-4" style="border-radius:4px;">
+          <vq-section-head
+            title="Past 10 days · ingestion vs resolution"
+            desc="New emails created vs resolved per day · oldest → newest"
+          />
+          <div class="grid grid-cols-2 gap-3 mt-2">
+            <div class="panel p-3" style="border-radius:4px; background: var(--bg);">
+              <div class="flex items-center justify-between">
+                <span
+                  class="muted uppercase"
+                  style="font-size:10px; letter-spacing:.04em;"
+                >
+                  New (10d)
+                </span>
+                <vq-mono [size]="14" [weight]="600">{{ newTotal() }}</vq-mono>
+              </div>
+              <div class="mt-2">
+                <vq-sparkline
+                  [data]="newSeries()"
+                  [height]="36"
+                  [color]="'var(--accent)'"
+                />
+              </div>
+              <div class="muted mt-1 flex justify-between" style="font-size:10px;">
+                <span>{{ daysAgoLabel() }}</span>
+                <span>today · <vq-mono [size]="10">{{ newToday() }}</vq-mono></span>
+              </div>
+            </div>
+
+            <div class="panel p-3" style="border-radius:4px; background: var(--bg);">
+              <div class="flex items-center justify-between">
+                <span
+                  class="muted uppercase"
+                  style="font-size:10px; letter-spacing:.04em;"
+                >
+                  Resolved (10d)
+                </span>
+                <vq-mono [size]="14" [weight]="600">{{ resolvedTotal() }}</vq-mono>
+              </div>
+              <div class="mt-2">
+                <vq-sparkline
+                  [data]="resolvedSeries()"
+                  [height]="36"
+                  [color]="'var(--ok)'"
+                />
+              </div>
+              <div class="muted mt-1 flex justify-between" style="font-size:10px;">
+                <span>{{ daysAgoLabel() }}</span>
+                <span>today · <vq-mono [size]="10">{{ resolvedToday() }}</vq-mono></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
 
       <!-- Pipeline visual -->
       <div class="panel p-5 mb-3" style="border-radius:4px;">
@@ -262,6 +377,7 @@ const ERROR_GROUPS: readonly ErrorGroup[] = [
 })
 export class EmailPage {
   protected readonly role = inject(RoleService);
+  protected readonly mail = inject(MailStore);
   protected readonly endpointsOpen = signal(false);
   protected readonly endpoints = ENDPOINTS_EMAIL_MONITOR;
 
@@ -269,6 +385,57 @@ export class EmailPage {
   protected readonly queues = QUEUES;
   protected readonly recent = RECENT_INGEST;
   protected readonly errors = ERROR_GROUPS;
+
+  // ---- Stats strip (priority + 10-day sparklines) ----
+  // All derived from MailStore.stats(); when the store hasn't loaded yet
+  // we fall through to zero-filled defaults so the SVG never errors out
+  // on an empty array.
+  protected readonly statsStatus = this.mail.status;
+
+  protected readonly priorityTiles = computed<readonly PriorityTile[]>(() => {
+    const breakdown = this.mail.stats()?.priority_breakdown;
+    return PRIORITY_ORDER.map((key) => {
+      const palette = PRIORITY_COLORS[key];
+      const value = breakdown?.[key] ?? 0;
+      return {
+        key,
+        value,
+        labelColor: palette.label,
+        borderColor: palette.border,
+        valueColor: palette.value,
+      } satisfies PriorityTile;
+    });
+  });
+
+  protected readonly newSeries = computed<readonly number[]>(
+    () => this.mail.stats()?.past_10_days_new ?? new Array(10).fill(0),
+  );
+  protected readonly resolvedSeries = computed<readonly number[]>(
+    () => this.mail.stats()?.past_10_days_resolved ?? new Array(10).fill(0),
+  );
+
+  protected readonly newToday = computed<number>(() => this.tail(this.newSeries()));
+  protected readonly resolvedToday = computed<number>(() => this.tail(this.resolvedSeries()));
+  protected readonly newTotal = computed<number>(
+    () => this.newSeries().reduce((a, b) => a + b, 0),
+  );
+  protected readonly resolvedTotal = computed<number>(
+    () => this.resolvedSeries().reduce((a, b) => a + b, 0),
+  );
+
+  protected readonly daysAgoLabel = (): string => '9d ago';
+
+  protected readonly statsHint = computed<string>(() => {
+    const s = this.statsStatus();
+    if (s === 'loading') return 'loading…';
+    if (s === 'error') return this.mail.error() ?? 'error';
+    if (s === 'mock') return 'mock data';
+    return 'stale';
+  });
+
+  private tail(arr: readonly number[]): number {
+    return arr.length === 0 ? 0 : arr[arr.length - 1]!;
+  }
 
   protected formatAge(s: number): string {
     if (s < 60) return `${s}s`;

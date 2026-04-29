@@ -1,5 +1,5 @@
 import { HttpErrorResponse } from '@angular/common/http';
-import { Injectable, computed, effect, inject, signal } from '@angular/core';
+import { Injectable, computed, effect, inject, signal, untracked } from '@angular/core';
 import { firstValueFrom } from 'rxjs';
 import { QUERIES as MOCK_QUERIES } from '../data/mock-data';
 import type { Query } from '../data/models';
@@ -68,15 +68,23 @@ export class QueriesStore {
 
     // Re-derive UI queries when the vendor list changes so vendor-name
     // labels stay in sync with the master record.
+    //
+    // CRITICAL: read `#state` via `untracked()` so this effect does NOT
+    // depend on `#state`. Without that guard, every write below triggers
+    // the effect again — an infinite loop in zoneless mode that locks
+    // up the page (Mail screen mounts ComposeModal which injects this
+    // store, exposing the loop on every Mail page open).
     effect(() => {
       const vendors = this.#vendors.vendors();
       const dtos = this.#lastDtos();
-      if (this.#state().status !== 'live' || dtos.length === 0) return;
+      if (dtos.length === 0) return;
+      const stateNow = untracked(() => this.#state());
+      if (stateNow.status !== 'live') return;
       const remapped = toUiQueries(
         dtos as Parameters<typeof toUiQueries>[0],
         (id) => (id ? vendors.find((v) => v.vendor_id === id) ?? null : null),
       );
-      this.#state.update((s) => ({ ...s, queries: remapped }));
+      this.#state.set({ ...stateNow, queries: remapped });
     });
   }
 
